@@ -356,6 +356,7 @@ class SetupForm : Form
 // ===== Pop-up timer: rounded, draggable, compact dashboard =====
 class MiniTimer : Form
 {
+    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int m, int w, int l);
     public event Action<int, bool> Finished;
@@ -365,10 +366,12 @@ class MiniTimer : Form
     public MiniTimer(string task, int minutes, bool muted)
     {
         Muted = muted; total = left = Math.Max(1, minutes) * 60;
-        FormBorderStyle = FormBorderStyle.Sizable; ShowInTaskbar = false; TopMost = true;
-        ClientSize = new Size(350, 190); MinimumSize = new Size(300, 195);
+        FormBorderStyle = FormBorderStyle.Sizable; ShowInTaskbar = false; TopMost = true; Text = "Timer";
+        ClientSize = new Size(350, 205); MinimumSize = new Size(300, 195);
+        try { Icon = Icon.FromHandle(Theme.Logo(32).GetHicon()); } catch { }
         BackColor = Color.FromArgb(15, 20, 29); Font = new Font("Segoe UI", 9);
         var wa = Screen.PrimaryScreen.WorkingArea; StartPosition = FormStartPosition.Manual; Location = new Point(wa.Right - Width - 14, wa.Top + 90);
+        Shown += delegate { try { int darkCaption = 1; DwmSetWindowAttribute(Handle, 20, ref darkCaption, 4); DwmSetWindowAttribute(Handle, 19, ref darkCaption, 4); } catch { } };
         title = new Label { Text = "Timer", ForeColor = Color.White, Font = new Font("Segoe UI", 13, FontStyle.Bold) };
         clock = new Panel { BackColor = BackColor }; clock.Paint += DrawClock;
         lbl = new Label { TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White, Font = new Font("Segoe UI", 16, FontStyle.Bold), BackColor = Color.Transparent };
@@ -392,15 +395,16 @@ class MiniTimer : Form
     void LayoutTimer()
     {
         int w = ClientSize.Width, h = ClientSize.Height;
-        title.SetBounds(16, 10, w - 32, 24);
-        int d = Math.Max(76, Math.Min(92, h - 72));
-        clock.SetBounds(14, 43, d, d); lbl.SetBounds(0, 0, d, d);
-        int x = clock.Right + 12, avail = Math.Max(100, w - 14 - x);
-        bPause.SetBounds(x, 48, avail, 36);
-        int gap = 5, smallW = Math.Max(48, (avail - gap * 2) / 3), y = 94, bh = 28;
-        bStop.SetBounds(x, y, smallW, bh);
-        bPin.SetBounds(x + smallW + gap, y, smallW, bh);
-        bMute.SetBounds(x + (smallW + gap) * 2, y, Math.Max(45, avail - (smallW + gap) * 2), bh);
+        title.SetBounds(14, 5, w - 28, 24);
+        int d = Math.Max(72, Math.Min(88, w - 24));
+        clock.SetBounds((w - d) / 2, 29, d, d); lbl.SetBounds(0, 0, d, d);
+        int y = clock.Bottom + 2, gap = 5, bottom = h - y - 8;
+        int pauseW = Math.Min(150, w - 24);
+        bPause.SetBounds((w - pauseW) / 2, y, pauseW, 30);
+        int smallY = y + 34, avail = w - 28, smallW = (avail - gap * 2) / 3;
+        bStop.SetBounds(14, smallY, smallW, 25);
+        bPin.SetBounds(14 + smallW + gap, smallY, smallW, 25);
+        bMute.SetBounds(14 + (smallW + gap) * 2, smallY, smallW, 25);
     }
     void DrawClock(object sender, PaintEventArgs e)
     {
@@ -533,7 +537,7 @@ class MainForm : Form
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, int m, int w, string l);
     const int PAGE_HOME = 0, PAGE_PLAN = 1, PAGE_FOCUS = 2, PAGE_STATS = 3, PAGE_FILES = 4, PAGE_SETTINGS = 5, PAGE_ABOUT = 6, PAGES = 7;
-    string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 10f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false;
+    string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 10f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false, onboardingDone = false, minimizeDuringTimer = true;
     List<StudyTask> tasks = new List<StudyTask>(); List<Sess> sessions = new List<Sess>(); List<string[]> index = new List<string[]>();
     Panel banner, content; Panel[] pages = new Panel[PAGES]; Button[] nav = new Button[PAGES]; PictureBox pic; Button bDark, bPal;
     bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
@@ -559,7 +563,7 @@ class MainForm : Form
         viewMonth = DateTime.Today;
         try { Icon = Icon.FromHandle(Theme.Logo(64).GetHicon()); } catch { }
         content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14) }; Controls.Add(content);
-        for (int i = 0; i < PAGES; i++) { pages[i] = new Panel { Dock = DockStyle.Fill }; content.Controls.Add(pages[i]); }
+        for (int i = 0; i < PAGES; i++) { pages[i] = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Bg }; content.Controls.Add(pages[i]); }
         var navBar = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Theme.Bg };
         string[] names = { "Home", "Study Plan", "Focus Timer", "Stats", "Find Files", "Settings", "About" };
         for (int i = 0; i < PAGES; i++) { int k = i; nav[i] = Theme.Btn(names[i], 8 + i * 126, 8, 122, "nav"); nav[i].Height = 34; nav[i].Click += delegate { ShowPage(k); }; navBar.Controls.Add(nav[i]); }
@@ -567,7 +571,31 @@ class MainForm : Form
         Controls.Add(new Panel { Dock = DockStyle.Top, Height = 4, Tag = "line" });
         BuildBanner(); BuildHome(pages[PAGE_HOME]); BuildPlan(pages[PAGE_PLAN]); BuildFocus(pages[PAGE_FOCUS]); BuildStats(pages[PAGE_STATS]); BuildFiles(pages[PAGE_FILES]); BuildSettings(pages[PAGE_SETTINGS]); BuildAbout(pages[PAGE_ABOUT]);
         if (stamp == DateTime.MinValue) stamp = DateTime.UtcNow; loading = false; Recolor(); RefreshTasks(); RefreshStats(); RefreshStreak(); Scan(); Greet(); ShowPage(0); StartTimers();
-        Shown += delegate { if (userName == "") { var n = Prompt("Welcome!", "Hi! What's your name?", ""); userName = string.IsNullOrWhiteSpace(n) ? "Student" : n.Trim(); Save(); Greet(); } AutoCheck(); };
+        Shown += delegate
+        {
+            if (userName == "") { var n = Prompt("Welcome!", "Hi! What should we call you?", ""); userName = string.IsNullOrWhiteSpace(n) ? "Student" : n.Trim(); Save(); Greet(); }
+            if (!onboardingDone)
+            {
+                var answer = MessageBox.Show("STEP 1 OF 3 — YOUR NOTES\n\nDo you have one main folder that contains your study notes, PDFs, books, and lecture files?\n\nChoose Yes to select it now, or No to set it up later in Find Files.", "Welcome to Study Tracker", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information);
+                if (answer == DialogResult.Cancel) { onboardingDone = true; Save(); }
+                else
+                {
+                    if (answer == DialogResult.Yes)
+                    {
+                        using (var f = new FolderBrowserDialog())
+                        {
+                            f.Description = "Choose your main study-notes folder. Study Tracker will index file names for searching; it will not move or change your files.";
+                            f.ShowNewFolderButton = false;
+                            if (f.ShowDialog(this) == DialogResult.OK) { root = f.SelectedPath; Save(); Scan(); }
+                        }
+                    }
+                    MessageBox.Show("STEP 2 OF 3 — PLAN YOUR WORK\n\nOpen Study Plan to add subjects or tasks and set study targets. Use the task cards to start a reading timer or log study time.", "Quick tutorial", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("STEP 3 OF 3 — TRACK YOUR PROGRESS\n\nHome separates All tasks, To do, and Completed. Focus Timer runs Pomodoro sessions. Stats shows your progress. Find Files searches your chosen notes folder. Settings lets you change your name, theme, fonts, updates, and timer behavior.\n\nYou can change your notes folder later in Find Files.", "Quick tutorial", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    onboardingDone = true; Save();
+                }
+            }
+            AutoCheck();
+        };
     }
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); DarkBar(); }
     void DarkBar() { try { int v = Theme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref v, 4); DwmSetWindowAttribute(Handle, 19, ref v, 4); } catch { } }
@@ -630,6 +658,8 @@ class MainForm : Form
             else if (p[0] == "Z" && p.Length > 1) autoMode = p[1] == "1";
             else if (p[0] == "Q" && p.Length > 1 && float.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out fs)) uiFontSize = Math.Max(8f, Math.Min(16f, fs));
             else if (p[0] == "V" && p.Length > 1 && new string[] { "Segoe UI", "Arial", "Calibri", "Consolas" }.Contains(p[1])) uiFontFamily = p[1];
+            else if (p[0] == "W" && p.Length > 1) onboardingDone = p[1] == "1";
+            else if (p[0] == "X" && p.Length > 1) minimizeDuringTimer = p[1] == "1";
             else if (p[0] == "T" && p.Length > 3 && int.TryParse(p[2], out a)) tasks.Add(new StudyTask { Title = p[1], Target = a, Done = p[3] == "1" });
             else if (p[0] == "S" && p.Length > 4 && int.TryParse(p[3], out a) && int.TryParse(p[4], out b)) sessions.Add(new Sess { Date = p[1], Subject = p[2], Minutes = a, Pages = b });
         }
@@ -637,7 +667,7 @@ class MainForm : Form
     void Save()
     {
         if (loading) return;
-        var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal, "F\t" + focusCount, "U\t" + stamp.Ticks, "K\t" + lastCheck.Ticks, "L\t" + latest.Ticks, "Z\t" + (autoMode ? "1" : "0"), "Q\t" + uiFontSize.ToString(CultureInfo.InvariantCulture), "V\t" + uiFontFamily };
+        var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal, "F\t" + focusCount, "U\t" + stamp.Ticks, "K\t" + lastCheck.Ticks, "L\t" + latest.Ticks, "Z\t" + (autoMode ? "1" : "0"), "Q\t" + uiFontSize.ToString(CultureInfo.InvariantCulture), "V\t" + uiFontFamily, "W\t" + (onboardingDone ? "1" : "0"), "X\t" + (minimizeDuringTimer ? "1" : "0") };
         foreach (var t in tasks) l.Add("T\t" + Clean(t.Title) + "\t" + t.Target + "\t" + (t.Done ? "1" : "0"));
         foreach (var s in sessions) l.Add("S\t" + s.Date + "\t" + Clean(s.Subject) + "\t" + s.Minutes + "\t" + s.Pages);
         try { Directory.CreateDirectory(App.DataDir); File.WriteAllLines(dataFile, l.ToArray()); } catch (Exception e) { MessageBox.Show("Could not save: " + e.Message); }
@@ -736,11 +766,11 @@ class MainForm : Form
         miniTask = t; mini = new MiniTimer(t.Title, mins, muted);
         mini.Finished += (done, completed) =>
         {
-            muted = mini.Muted; Save(); if (done >= 1) AddSession(miniTask, done, 0);
+            muted = mini.Muted; if (minimizeDuringTimer && WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal; Save(); if (done >= 1) AddSession(miniTask, done, 0);
             lblStatus.Text = completed ? "Great job, " + userName + "! Logged " + done + " min on \"" + miniTask.Title + "\"." : (done >= 1 ? "Logged " + done + " min." : "Session ended (under 1 minute, not logged).");
             mini = null;
         };
-        mini.Show(); lblStatus.Text = "Timer running on the side of your screen. Focus time!";
+        mini.Show(); if (minimizeDuringTimer) WindowState = FormWindowState.Minimized; lblStatus.Text = "Timer running on the side of your screen. Focus time!";
     }
     StudyTask Selected() { if (selTask == null || !tasks.Contains(selTask)) { MessageBox.Show("Select a task first - click one of the cards."); return null; } return selTask; }
     void AddTask()
@@ -1070,11 +1100,14 @@ class MainForm : Form
         var med = new Label { Left = 10, Top = 170, Width = 780, Height = 26, Text = "Need medical lecture notes? Visit MedEduNotes:", Font = new Font("Segoe UI", 11, FontStyle.Bold) };
         var link = new LinkLabel { Left = 10, Top = 198, Width = 600, Height = 26, Text = "https://med-edu-notes.vercel.app/", Font = new Font("Segoe UI", 11) };
         link.LinkClicked += delegate { try { Process.Start(new ProcessStartInfo("https://med-edu-notes.vercel.app/") { UseShellExecute = true }); } catch { } };
-        var tip = new Label { Left = 10, Top = 240, Width = 800, Height = 44, Tag = "muted", Text = "Tip: put a file named logo.png next to the app to replace the built-in logo. Your data stays on this computer (in your user folder) and never leaves it." };
-        lblInst = new Label { Left = 10, Top = 296, Width = 800, Height = 24, Tag = "muted", Text = "Installed at: " + (Installer.RunningInstalled() ? App.ExeDir : "not installed (running portable)") };
-        var bun = Theme.Btn("Uninstall Study Tracker", 10, 330, 220, "b"); bun.Height = 36;
+        var contactTitle = new Label { Left = 10, Top = 240, Width = 800, Height = 26, Tag = "sub", Font = new Font("Segoe UI", 11, FontStyle.Bold), Text = "Contact me" };
+        var contact = new LinkLabel { Left = 10, Top = 268, Width = 600, Height = 26, Text = "kjnrmbiriri1+studytracker@gmail.com", Font = new Font("Segoe UI", 10) };
+        contact.LinkClicked += delegate { try { Process.Start(new ProcessStartInfo("mailto:kjnrmbiriri1+studytracker@gmail.com") { UseShellExecute = true }); } catch { MessageBox.Show("Email: kjnrmbiriri1+studytracker@gmail.com", "Contact me"); } };
+        var tip = new Label { Left = 10, Top = 302, Width = 800, Height = 44, Tag = "muted", Text = "Tip: put a file named logo.png next to the app to replace the built-in logo. Your data stays on this computer (in your user folder) and never leaves it." };
+        lblInst = new Label { Left = 10, Top = 352, Width = 800, Height = 24, Tag = "muted", Text = "Installed at: " + (Installer.RunningInstalled() ? App.ExeDir : "not installed (running portable)") };
+        var bun = Theme.Btn("Uninstall Study Tracker", 10, 386, 220, "b"); bun.Height = 36;
         bun.Click += delegate { if (Installer.Uninstall(this)) { loading = true; Environment.Exit(0); } };
-        p.Controls.AddRange(new Control[] { pb2, title, by, desc, med, link, tip, lblInst, bun });
+        p.Controls.AddRange(new Control[] { pb2, title, by, desc, med, link, contactTitle, contact, tip, lblInst, bun });
     }
 
     // ---------- updates ----------
@@ -1098,7 +1131,9 @@ class MainForm : Form
         var fontLabel = new Label { Left = 10, Top = 208, Width = 90, Height = 28, Text = "Font size", Tag = "muted" };
         var fontPick = new ComboBox { Left = 105, Top = 204, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList }; fontPick.Items.AddRange(new object[] { "Small", "Normal", "Large", "Extra large" }); fontPick.SelectedIndex = uiFontSize < 9.5f ? 0 : uiFontSize < 11f ? 1 : uiFontSize < 13f ? 2 : 3;
         fontPick.SelectedIndexChanged += delegate { float next = new float[] { 9f, 10f, 12f, 14f }[fontPick.SelectedIndex]; float ratio = next / uiFontSize; ScaleFonts(this, ratio); uiFontSize = next; Save(); };
-        var updatesHead = new Label { Left = 10, Top = 246, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 13, FontStyle.Bold), Tag = "sub" };
+        var minimizeCheck = new CheckBox { Left = 10, Top = 240, Width = 500, Height = 26, Text = "Minimize Study Tracker while the reading timer is running", Checked = minimizeDuringTimer };
+        minimizeCheck.CheckedChanged += delegate { minimizeDuringTimer = minimizeCheck.Checked; Save(); };
+        var updatesHead = new Label { Left = 10, Top = 276, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 13, FontStyle.Bold), Tag = "sub" };
         lblVer = new Label { Left = 10, Top = 54, Width = 700, Height = 28, Font = new Font("Segoe UI", 13, FontStyle.Bold) };
         lblUpdInfo = new Label { Left = 10, Top = 88, Width = 800, Height = 42, Tag = "muted" };
         lblUpdStatus = new Label { Left = 10, Top = 136, Width = 820, Height = 30, Font = new Font("Segoe UI", 12, FontStyle.Bold), Tag = "white" };
@@ -1108,8 +1143,8 @@ class MainForm : Form
         rbAuto = new RadioButton { Left = 10, Top = 226, Width = 820, Height = 26, Text = "Automatic updates", Checked = autoMode };
         rbManual = new RadioButton { Left = 10, Top = 256, Width = 820, Height = 26, Text = "Notify me; let me install updates", Checked = !autoMode };
         var note = new Label { Left = 10, Top = 350, Width = 820, Height = 28, Tag = "muted", Text = "Your study data stays on this computer during updates." };
-        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
-        lblVer.Top = 280; lblUpdInfo.Top = 312; lblUpdStatus.Top = 356; bCheck.Top = 396; bInstall.Top = 396; prog.Top = 408; rbAuto.Top = 442; rbManual.Top = 472; note.Top = 506;
+        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, minimizeCheck, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
+        lblVer.Top = 310; lblUpdInfo.Top = 342; lblUpdStatus.Top = 386; bCheck.Top = 426; bInstall.Top = 426; prog.Top = 438; rbAuto.Top = 472; rbManual.Top = 502; note.Top = 536;
         bCheck.Click += delegate { CheckNow(true); };
         bInstall.Click += delegate { InstallUpdate(false); };
         rbAuto.CheckedChanged += delegate { autoMode = rbAuto.Checked; Save(); };
