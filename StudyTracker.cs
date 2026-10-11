@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -27,7 +27,7 @@ static class App
     public static string DataDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StudyTracker"); } }
 }
 
-// ===== Colors: built around the MedEduNotes dark teal (#0c1f22), styled after studytracker.co.in =====
+// ===== Colors: MedEduNotes dark teal (#0c1f22) with green accents, cards and borders in the studytracker.co.in style =====
 static class Theme
 {
     public static bool Dark; public static int Pal;
@@ -67,11 +67,11 @@ static class Theme
             else if (k is LinkLabel) { var l = (LinkLabel)k; l.LinkColor = Accent; l.ActiveLinkColor = Accent2; l.BackColor = Color.Transparent; }
             else if (k is Label) { k.BackColor = Color.Transparent; if (tag != "white") k.ForeColor = tag == "muted" ? Muted : tag == "title" ? Accent : tag == "sub" ? Accent2 : Text; }
             else if (k is CheckBox || k is RadioButton) { k.ForeColor = Text; k.BackColor = Color.Transparent; }
-            else if (k is TextBox) { k.BackColor = Card; k.ForeColor = Text; ((TextBox)k).BorderStyle = BorderStyle.FixedSingle; }
+            else if (k is TextBox) { k.BackColor = Card; k.ForeColor = Text; ((TextBox)k).BorderStyle = tag == "flat" ? BorderStyle.None : BorderStyle.FixedSingle; }
             else if (k is NumericUpDown) { k.BackColor = Card; k.ForeColor = Text; }
             else if (k is ComboBox) { var cb = (ComboBox)k; cb.BackColor = Card; cb.ForeColor = Text; cb.FlatStyle = FlatStyle.Flat; }
             else if (k is ListView) { k.BackColor = Card; k.ForeColor = Text; ((ListView)k).BorderStyle = BorderStyle.None; }
-            else if (k is ListBox) { k.BackColor = Card; k.ForeColor = Text; ((ListBox)k).BorderStyle = BorderStyle.FixedSingle; }
+            else if (k is ListBox) { k.BackColor = Card; k.ForeColor = Text; ((ListBox)k).BorderStyle = tag == "flat" ? BorderStyle.None : BorderStyle.FixedSingle; }
             else if (k is Panel)
             {
                 if (tag == "banner") { } else if (tag == "line") k.BackColor = Accent; else if (tag == "card") k.BackColor = Card; else k.BackColor = Bg;
@@ -244,7 +244,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "5.1";
+    public const string Version = "5.3";
     const string Owner = "kjnrmbiriri01", Repo = "Study-Tracker";
     public static string TempRoot { get { return Path.Combine(Path.GetTempPath(), "StudyTrackerUpdate"); } }
     static WebClient Client()
@@ -353,71 +353,195 @@ class SetupForm : Form
     }
 }
 
-// ===== Pop-up reading timer: borderless, rounded, draggable, no white title bar =====
+// ===== Pop-up timer: rounded, draggable, compact dashboard =====
 class MiniTimer : Form
 {
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int m, int w, int l);
     public event Action<int, bool> Finished;
     int total, left, elapsed; bool paused, ended; public bool Muted;
-    Label lbl, lblTask; ProgressBar pb; Timer t = new Timer { Interval = 1000 }; Button bPause, bPin, bMute;
-
+    Label lbl, title; Panel clock; Button bPause, bPin, bMute, bStop;
+    Timer t = new Timer { Interval = 1000 };
     public MiniTimer(string task, int minutes, bool muted)
     {
-        Muted = muted; total = left = minutes * 60;
-        FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true; ClientSize = new Size(240, 166);
-        BackColor = Color.FromArgb(17, 41, 45); Font = new Font("Segoe UI", 9);
-        Region = new Region(Theme.Round(new Rectangle(0, 0, Width, Height), 22));
+        Muted = muted; total = left = Math.Max(1, minutes) * 60;
+        FormBorderStyle = FormBorderStyle.Sizable; ShowInTaskbar = false; TopMost = true;
+        ClientSize = new Size(350, 190); MinimumSize = new Size(300, 195);
+        BackColor = Color.FromArgb(15, 20, 29); Font = new Font("Segoe UI", 9);
         var wa = Screen.PrimaryScreen.WorkingArea; StartPosition = FormStartPosition.Manual; Location = new Point(wa.Right - Width - 14, wa.Top + 90);
-        lblTask = new Label { Text = task, Left = 16, Top = 12, Width = 208, Height = 18, ForeColor = Theme.Accent3, AutoEllipsis = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
-        lbl = new Label { Left = 0, Top = 32, Width = 240, Height = 52, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White, Font = new Font("Consolas", 28, FontStyle.Bold) };
-        pb = new ProgressBar { Left = 16, Top = 90, Width = 208, Height = 8, Maximum = total, Style = ProgressBarStyle.Continuous };
-        bPause = Mk("Pause", 16, 108, 64, Theme.Accent); bPin = Mk("Pinned", 88, 108, 64, Theme.Accent2); bMute = Mk(Muted ? "Unmute" : "Mute", 160, 108, 64, Color.FromArgb(70, 100, 105));
-        var bStop = Mk("Finish early", 16, 136, 208, Color.FromArgb(40, 70, 76));
-        Controls.AddRange(new Control[] { lblTask, lbl, pb, bPause, bPin, bMute, bStop });
-        MouseDown += Drag; lbl.MouseDown += Drag; lblTask.MouseDown += Drag; Show2();
+        title = new Label { Text = "Timer", ForeColor = Color.White, Font = new Font("Segoe UI", 13, FontStyle.Bold) };
+        clock = new Panel { BackColor = BackColor }; clock.Paint += DrawClock;
+        lbl = new Label { TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White, Font = new Font("Segoe UI", 16, FontStyle.Bold), BackColor = Color.Transparent };
+        clock.Controls.Add(lbl);
+        bPause = Mk("Ⅱ  Pause", 0, 0, 0, 0, Color.FromArgb(255, 100, 35));
+        bStop = Mk("Finish", 0, 0, 0, 0, Color.FromArgb(36, 46, 62));
+        bPin = Mk("Pin", 0, 0, 0, 0, Color.FromArgb(36, 46, 62));
+        bMute = Mk(Muted ? "Muted" : "Sound", 0, 0, 0, 0, Color.FromArgb(36, 46, 62));
+        Controls.AddRange(new Control[] { title, clock, bPause, bStop, bPin, bMute });
+        Resize += delegate { LayoutTimer(); }; LayoutTimer();
+        MouseDown += Drag; title.MouseDown += Drag; clock.MouseDown += Drag; lbl.MouseDown += Drag;
+        Show2();
         t.Tick += delegate { if (paused || ended) return; left--; elapsed++; Show2(); if (left <= 0) Done(true); };
         t.Start();
-        bPause.Click += delegate { paused = !paused; bPause.Text = paused ? "Resume" : "Pause"; };
-        bPin.Click += delegate { TopMost = !TopMost; bPin.Text = TopMost ? "Pinned" : "Pin"; bPin.BackColor = TopMost ? Theme.Accent2 : Color.FromArgb(70, 100, 105); };
-        bMute.Click += delegate { Muted = !Muted; bMute.Text = Muted ? "Unmute" : "Mute"; };
+        bPause.Click += delegate { paused = !paused; bPause.Text = paused ? "▶  Start" : "Ⅱ  Pause"; };
+        bPin.Click += delegate { TopMost = !TopMost; bPin.Text = TopMost ? "Pinned" : "Pin"; bPin.BackColor = TopMost ? Color.FromArgb(87, 57, 174) : Color.FromArgb(36, 46, 62); };
+        bMute.Click += delegate { Muted = !Muted; bMute.Text = Muted ? "Muted" : "Sound"; };
         bStop.Click += delegate { Done(false); };
-        FormClosing += delegate { if (!ended) { ended = true; t.Stop(); if (Finished != null) Finished(elapsed / 60, false); } };
+        FormClosing += delegate { if (!ended) { ended = true; t.Stop(); if (Finished != null) Finished((int)Math.Round(elapsed / 60.0), false); } };
+    }
+    void LayoutTimer()
+    {
+        int w = ClientSize.Width, h = ClientSize.Height;
+        title.SetBounds(16, 10, w - 32, 24);
+        int d = Math.Max(76, Math.Min(92, h - 72));
+        clock.SetBounds(14, 43, d, d); lbl.SetBounds(0, 0, d, d);
+        int x = clock.Right + 12, avail = Math.Max(100, w - 14 - x);
+        bPause.SetBounds(x, 48, avail, 36);
+        int gap = 5, smallW = Math.Max(48, (avail - gap * 2) / 3), y = 94, bh = 28;
+        bStop.SetBounds(x, y, smallW, bh);
+        bPin.SetBounds(x + smallW + gap, y, smallW, bh);
+        bMute.SetBounds(x + (smallW + gap) * 2, y, Math.Max(45, avail - (smallW + gap) * 2), bh);
+    }
+    void DrawClock(object sender, PaintEventArgs e)
+    {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        var r = new Rectangle(6, 6, clock.Width - 12, clock.Height - 12);
+        using (var p = new Pen(Color.FromArgb(35, 44, 60), 7)) g.DrawArc(p, r, 0, 360);
+        float pct = total > 0 ? Math.Max(0, Math.Min(1, elapsed / (float)total)) : 0;
+        using (var p = new Pen(Color.FromArgb(255, 100, 35), 7) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, r, -90, 360 * pct);
     }
     void Drag(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } }
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using (var p = Theme.Round(new Rectangle(1, 1, Width - 3, Height - 3), 22)) using (var pen = new Pen(Theme.Accent, 3)) e.Graphics.DrawPath(pen, p);
+        using (var p = Theme.Round(new Rectangle(1, 1, Width - 3, Height - 3), 18)) using (var pen = new Pen(Color.FromArgb(39, 49, 66), 1)) e.Graphics.DrawPath(pen, p);
     }
-    Button Mk(string s, int x, int y, int w, Color c)
+    Button Mk(string s, int x, int y, int w, int h, Color c)
     {
-        var b = new Button { Text = s, Left = x, Top = y, Width = w, Height = 24, FlatStyle = FlatStyle.Flat, BackColor = c, ForeColor = Color.White, Cursor = Cursors.Hand };
+        var b = new Button { Text = s, Left = x, Top = y, Width = w, Height = h, FlatStyle = FlatStyle.Flat, BackColor = c, ForeColor = Color.White, Cursor = Cursors.Hand, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
         b.FlatAppearance.BorderSize = 0; return b;
     }
-    void Show2() { lbl.Text = (left / 60).ToString("00") + ":" + (left % 60).ToString("00"); pb.Value = Math.Min(total, Math.Max(0, elapsed)); }
+    void Show2() { lbl.Text = left <= 0 ? "00:00" : (left / 60).ToString("00") + ":" + (left % 60).ToString("00"); if (clock != null) clock.Invalidate(); }
     void Done(bool completed)
     {
         if (ended) return; ended = true; t.Stop();
-        if (completed) { lbl.Text = "Time's up!"; lbl.Font = new Font("Segoe UI", 17, FontStyle.Bold); BackColor = Color.FromArgb(20, 70, 72); if (!Muted) Sound.Chime(); }
+        if (completed) { lbl.Text = "Done!"; lbl.Font = new Font("Segoe UI", 13, FontStyle.Bold); if (!Muted) Sound.Chime(); }
         if (Finished != null) Finished((int)Math.Round(elapsed / 60.0), completed);
-        if (completed) { var c = new Timer { Interval = 6000 }; c.Tick += delegate { c.Stop(); Close(); }; c.Start(); } else Close();
+        if (completed) { var c = new Timer { Interval = 6000 }; c.Tick += delegate { c.Stop(); c.Dispose(); Close(); }; c.Start(); } else Close();
+    }
+}
+
+// ===== Minutes stepper: rounded  [-]  60 min  [+]  =====
+class Stepper : Card
+{
+    public int Min = 0, Max = 9999, Step = 5; int val = 60; string suf = "min"; Label lbl; Button bm, bp;
+    public Stepper()
+    {
+        Width = 128; Height = 36;
+        bm = Theme.Btn("-", 3, 3, 30, "a"); bp = Theme.Btn("+", 95, 3, 30, "a"); bm.Height = bp.Height = 30;
+        lbl = new Label { Top = 7, Height = 22, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold) };
+        Controls.AddRange(new Control[] { bm, bp, lbl });
+        bm.Click += delegate { Value = val - Step; }; bp.Click += delegate { Value = val + Step; };
+        Resize += delegate { Lay(); }; Lay(); Value = val;
+    }
+    void Lay() { bm.Left = 3; bp.Left = Width - 33; lbl.Left = 34; lbl.Width = Math.Max(20, Width - 68); }
+    public int Value { get { return val; } set { val = Math.Max(Min, Math.Min(Max, value)); lbl.Text = val + " " + suf; } }
+    public string Suffix { get { return suf; } set { suf = value; lbl.Text = val + " " + suf; } }
+}
+
+// ===== Modern pop-up used for names, "log time" and the reading timer =====
+class AskForm : Form
+{
+    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
+    TextBox tb; Stepper sm, sp;
+    public string Answer { get { return tb == null ? "" : tb.Text; } }
+    public int Minutes { get { return sm == null ? 0 : sm.Value; } }
+    public int Pages { get { return sp == null ? 0 : sp.Value; } }
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); try { int v = Theme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref v, 4); DwmSetWindowAttribute(Handle, 19, ref v, 4); } catch { } }
+    void Init(string title, string sub, int h)
+    {
+        FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
+        ClientSize = new Size(440, h); BackColor = Theme.Bg; Font = new Font("Segoe UI", 10); Text = title;
+        var head = new Panel { Dock = DockStyle.Top, Height = 70, Tag = "banner" };
+        head.Paint += (s, e) => { using (var gb = new LinearGradientBrush(head.ClientRectangle, Theme.Base, Theme.Accent, 0f)) e.Graphics.FillRectangle(gb, head.ClientRectangle); };
+        head.Controls.Add(new Label { Left = 22, Top = 10, Width = 396, Height = 28, Text = title, Tag = "white", ForeColor = Color.White, Font = new Font("Segoe UI", 15, FontStyle.Bold) });
+        head.Controls.Add(new Label { Left = 24, Top = 40, Width = 396, Height = 22, Text = sub, Tag = "white", ForeColor = Color.FromArgb(215, 245, 240), AutoEllipsis = true });
+        Controls.Add(head);
+    }
+    void Buttons(int h)
+    {
+        var ok = Theme.Btn("Save", 316, h - 56, 100, "a"); ok.Height = 36; ok.DialogResult = DialogResult.OK;
+        var no = Theme.Btn("Cancel", 206, h - 56, 100, "c"); no.Height = 36; no.DialogResult = DialogResult.Cancel;
+        Controls.Add(ok); Controls.Add(no); AcceptButton = ok; CancelButton = no; Theme.Skin(this);
+    }
+    public AskForm(string title, string label, string def)   // text answer
+    {
+        Init(title, "", 236);
+        Controls.Add(new Label { Left = 24, Top = 86, Width = 392, Height = 22, Text = label, Tag = "muted" });
+        var card = new Card { Left = 24, Top = 112, Width = 392, Height = 48 };
+        tb = new TextBox { Left = 14, Top = 11, Width = 364, Text = def, Tag = "flat", Font = new Font("Segoe UI", 13) };
+        card.Controls.Add(tb); Controls.Add(card); Buttons(236);
+        Shown += delegate { tb.Focus(); tb.SelectAll(); };
+    }
+    public AskForm(string title, string sub, string label, int def, bool pages)   // minutes (+ optional pages)
+    {
+        int h = pages ? 346 : 272; Init(title, sub, h);
+        Controls.Add(new Label { Left = 24, Top = 86, Width = 392, Height = 22, Text = label, Tag = "muted" });
+        sm = new Stepper { Left = 24, Top = 112, Width = 200, Min = 1, Max = 600, Step = 5, Value = def }; Controls.Add(sm);
+        int[] q = { 15, 25, 30, 45, 60, 90 };
+        for (int i = 0; i < q.Length; i++) { int v = q[i]; var c = Theme.Btn(v + "m", 24 + i * 66, 160, 60, "a"); c.Height = 30; c.Click += delegate { sm.Value = v; }; Controls.Add(c); }
+        if (pages)
+        {
+            Controls.Add(new Label { Left = 24, Top = 208, Width = 392, Height = 22, Text = "Pages read (optional)", Tag = "muted" });
+            sp = new Stepper { Left = 24, Top = 234, Width = 200, Min = 0, Max = 5000, Step = 1, Suffix = "pages", Value = 0 }; Controls.Add(sp);
+        }
+        Buttons(h);
+    }
+}
+
+// ===== One study task shown as a rounded, bordered card =====
+class TaskCard : Card
+{
+    public StudyTask T; public int Studied; public bool Selected; public Action<TaskCard> OnSelect, OnToggle;
+    static Font fT = new Font("Segoe UI", 11.5f, FontStyle.Bold), fS = new Font("Segoe UI", 9f);
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (new Rectangle(12, 12, 38, 38).Contains(e.Location)) { if (OnToggle != null) OnToggle(this); } else if (OnSelect != null) OnSelect(this);
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e); var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        if (Selected) using (var gp = Theme.Round(new Rectangle(1, 1, Width - 3, Height - 3), 16)) using (var pen = new Pen(Theme.Accent, 2f)) g.DrawPath(pen, gp);
+        var c = new Rectangle(18, 18, 24, 24);
+        if (T.Done) { using (var br = new SolidBrush(Theme.Accent)) g.FillEllipse(br, c); using (var pen = new Pen(Color.White, 2.5f)) g.DrawLines(pen, new Point[] { new Point(24, 30), new Point(29, 35), new Point(37, 24) }); }
+        else using (var pen = new Pen(Theme.Border, 2f)) g.DrawEllipse(pen, c);
+        int tw = Math.Max(60, Width - 300);
+        var fl = TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter;
+        TextRenderer.DrawText(g, T.Title, fT, new Rectangle(56, 10, tw, 26), T.Done ? Theme.Muted : Theme.Text, fl);
+        TextRenderer.DrawText(g, "Studied " + Studied + " of " + T.Target + " min" + (T.Done ? "  -  completed" : ""), fS, new Rectangle(56, 36, tw, 20), Theme.Muted, fl);
+        int pct = T.Target > 0 ? Math.Min(100, Studied * 100 / T.Target) : (Studied > 0 ? 100 : 0);
+        var tr = new Rectangle(56, 66, tw, 10);
+        using (var gp = Theme.Round(tr, 10)) using (var br = new SolidBrush(Theme.Border)) g.FillPath(br, gp);
+        if (pct > 0) { var fr = new Rectangle(56, 66, Math.Max(10, tw * pct / 100), 10); using (var gp = Theme.Round(fr, 10)) using (var br = new LinearGradientBrush(fr, Theme.Accent, Theme.Accent2, 0f)) g.FillPath(br, gp); }
+        TextRenderer.DrawText(g, pct + "%", fS, new Rectangle(56 + tw + 8, 60, 50, 22), Theme.Muted, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
     }
 }
 
 class MainForm : Form
 {
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
-    const int PAGE_PLAN = 0, PAGE_FOCUS = 1, PAGE_STATS = 2, PAGE_STREAK = 3, PAGE_FILES = 4, PAGE_UPDATES = 5, PAGE_ABOUT = 6, PAGES = 7;
-    string dataFile, root = "", userName = ""; int goal = 60, cur = 0; bool loading = true, muted = false;
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, int m, int w, string l);
+    const int PAGE_HOME = 0, PAGE_PLAN = 1, PAGE_FOCUS = 2, PAGE_STATS = 3, PAGE_FILES = 4, PAGE_SETTINGS = 5, PAGE_ABOUT = 6, PAGES = 7;
+    string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 10f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false;
     List<StudyTask> tasks = new List<StudyTask>(); List<Sess> sessions = new List<Sess>(); List<string[]> index = new List<string[]>();
     Panel banner, content; Panel[] pages = new Panel[PAGES]; Button[] nav = new Button[PAGES]; PictureBox pic; Button bDark, bPal;
     bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
     Timer dotTimer, hourTimer; Label lblVer, lblUpdInfo, lblUpdStatus; Button bCheck, bInstall; ProgressBar prog; RadioButton rbAuto, rbManual;
-    TextBox txtTitle; NumericUpDown numTarget; ListView lvTasks; Label lblStatus, lblHello, lblQuote, lblInst; Button btnRead; MiniTimer mini; StudyTask miniTask;
+    TextBox txtTitle; Stepper numTarget; FlowLayoutPanel taskFlow, homeFlow; Label homeSummary; Button[] homeFilters = new Button[3]; StudyTask selTask; Label lblPlanSummary; Label lblDayInfo; ListBox lbDay; DateTime selDay = DateTime.Today; Label lblStatus, lblHello, lblQuote, lblInst; Button btnRead; MiniTimer mini; StudyTask miniTask;
     Label lblSummary; ProgressBar bar; Panel chart; ListBox lbSubjects; NumericUpDown numGoal; Label lblRoot; TextBox txtSearch; ListView lvFiles;
     // focus timer (Pomodoro)
-    Panel ring; Label lblRingTime, lblRingMode, lblFocusStatus; Button bStart, bReset; NumericUpDown numFocusMin; ComboBox cbSub; CheckBox chkLog;
+    Panel ring; Label lblRingTime, lblRingMode, lblFocusStatus; Button bStart, bReset, bSound; NumericUpDown numFocusMin; ComboBox cbSub; CheckBox chkLog;
     int fleft = 25 * 60, ftotal = 25 * 60, focusCount; string fmode = "focus"; bool frunning; Timer fTimer; Button bFocus, bShort, bLong;
     // streak calendar
     Panel heat; DateTime viewMonth; Label lblStreak; Button bPrev, bNext, bThisMonth;
@@ -431,17 +555,17 @@ class MainForm : Form
     public MainForm()
     {
         Text = "Study Tracker"; Width = 980; Height = 720; MinimumSize = new Size(880, 640); Font = new Font("Segoe UI", 10); StartPosition = FormStartPosition.CenterScreen;
-        dataFile = Path.Combine(App.DataDir, "study_data.txt"); bool dark = false; int pal = 0; Load_(ref dark, ref pal); Theme.Apply(dark, pal);
+        dataFile = Path.Combine(App.DataDir, "study_data.txt"); bool dark = true; int pal = 0; Load_(ref dark, ref pal); Theme.Apply(dark, pal);
         viewMonth = DateTime.Today;
         try { Icon = Icon.FromHandle(Theme.Logo(64).GetHicon()); } catch { }
         content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14) }; Controls.Add(content);
         for (int i = 0; i < PAGES; i++) { pages[i] = new Panel { Dock = DockStyle.Fill }; content.Controls.Add(pages[i]); }
         var navBar = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Theme.Bg };
-        string[] names = { "Study Plan", "Focus Timer", "Stats", "Streaks", "Find Files", "Updates", "About" };
+        string[] names = { "Home", "Study Plan", "Focus Timer", "Stats", "Find Files", "Settings", "About" };
         for (int i = 0; i < PAGES; i++) { int k = i; nav[i] = Theme.Btn(names[i], 8 + i * 126, 8, 122, "nav"); nav[i].Height = 34; nav[i].Click += delegate { ShowPage(k); }; navBar.Controls.Add(nav[i]); }
-        nav[PAGE_UPDATES].Paint += NavDot; Controls.Add(navBar);
+        nav[PAGE_SETTINGS].Paint += NavDot; Controls.Add(navBar);
         Controls.Add(new Panel { Dock = DockStyle.Top, Height = 4, Tag = "line" });
-        BuildBanner(); BuildPlan(pages[PAGE_PLAN]); BuildFocus(pages[PAGE_FOCUS]); BuildStats(pages[PAGE_STATS]); BuildStreak(pages[PAGE_STREAK]); BuildFiles(pages[PAGE_FILES]); BuildUpdates(pages[PAGE_UPDATES]); BuildAbout(pages[PAGE_ABOUT]);
+        BuildBanner(); BuildHome(pages[PAGE_HOME]); BuildPlan(pages[PAGE_PLAN]); BuildFocus(pages[PAGE_FOCUS]); BuildStats(pages[PAGE_STATS]); BuildFiles(pages[PAGE_FILES]); BuildSettings(pages[PAGE_SETTINGS]); BuildAbout(pages[PAGE_ABOUT]);
         if (stamp == DateTime.MinValue) stamp = DateTime.UtcNow; loading = false; Recolor(); RefreshTasks(); RefreshStats(); RefreshStreak(); Scan(); Greet(); ShowPage(0); StartTimers();
         Shown += delegate { if (userName == "") { var n = Prompt("Welcome!", "Hi! What's your name?", ""); userName = string.IsNullOrWhiteSpace(n) ? "Student" : n.Trim(); Save(); Greet(); } AutoCheck(); };
     }
@@ -459,7 +583,7 @@ class MainForm : Form
     {
         cur = i;
         for (int j = 0; j < PAGES; j++) { pages[j].Visible = j == i; nav[j].BackColor = j == i ? Theme.Accent : Theme.Card; nav[j].ForeColor = j == i ? Color.White : Theme.Text; }
-        if (i == PAGE_STATS) RefreshStats(); if (i == PAGE_STREAK) RefreshStreak(); if (i == PAGE_FILES) txtSearch.Focus();
+        if (i == PAGE_HOME) RefreshHome(); if (i == PAGE_STATS) { RefreshStats(); RefreshStreak(); } if (i == PAGE_FILES) txtSearch.Focus();
     }
 
     // ---------- banner ----------
@@ -492,7 +616,7 @@ class MainForm : Form
         if (!File.Exists(dataFile)) return;
         foreach (var line in File.ReadAllLines(dataFile))
         {
-            var p = line.Split('\t'); int a, b; long tk;
+            var p = line.Split('\t'); int a, b; long tk; float fs;
             if (p[0] == "R" && p.Length > 1) root = p[1];
             else if (p[0] == "N" && p.Length > 1) userName = p[1];
             else if (p[0] == "M" && p.Length > 1) muted = p[1] == "1";
@@ -504,6 +628,8 @@ class MainForm : Form
             else if (p[0] == "K" && p.Length > 1 && long.TryParse(p[1], out tk) && tk >= 0) lastCheck = new DateTime(tk, DateTimeKind.Utc);
             else if (p[0] == "L" && p.Length > 1 && long.TryParse(p[1], out tk) && tk >= 0) latest = new DateTime(tk, DateTimeKind.Utc);
             else if (p[0] == "Z" && p.Length > 1) autoMode = p[1] == "1";
+            else if (p[0] == "Q" && p.Length > 1 && float.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out fs)) uiFontSize = Math.Max(8f, Math.Min(16f, fs));
+            else if (p[0] == "V" && p.Length > 1 && new string[] { "Segoe UI", "Arial", "Calibri", "Consolas" }.Contains(p[1])) uiFontFamily = p[1];
             else if (p[0] == "T" && p.Length > 3 && int.TryParse(p[2], out a)) tasks.Add(new StudyTask { Title = p[1], Target = a, Done = p[3] == "1" });
             else if (p[0] == "S" && p.Length > 4 && int.TryParse(p[3], out a) && int.TryParse(p[4], out b)) sessions.Add(new Sess { Date = p[1], Subject = p[2], Minutes = a, Pages = b });
         }
@@ -511,90 +637,102 @@ class MainForm : Form
     void Save()
     {
         if (loading) return;
-        var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal, "F\t" + focusCount, "U\t" + stamp.Ticks, "K\t" + lastCheck.Ticks, "L\t" + latest.Ticks, "Z\t" + (autoMode ? "1" : "0") };
+        var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal, "F\t" + focusCount, "U\t" + stamp.Ticks, "K\t" + lastCheck.Ticks, "L\t" + latest.Ticks, "Z\t" + (autoMode ? "1" : "0"), "Q\t" + uiFontSize.ToString(CultureInfo.InvariantCulture), "V\t" + uiFontFamily };
         foreach (var t in tasks) l.Add("T\t" + Clean(t.Title) + "\t" + t.Target + "\t" + (t.Done ? "1" : "0"));
         foreach (var s in sessions) l.Add("S\t" + s.Date + "\t" + Clean(s.Subject) + "\t" + s.Minutes + "\t" + s.Pages);
         try { Directory.CreateDirectory(App.DataDir); File.WriteAllLines(dataFile, l.ToArray()); } catch (Exception e) { MessageBox.Show("Could not save: " + e.Message); }
     }
     int Studied(string title) { return sessions.Where(s => s.Subject == title).Sum(s => s.Minutes); }
 
-    // ---------- plan (styled cards, no spreadsheet look) ----------
+    // ---------- home: task overview ----------
+    void BuildHome(Control p)
+    {
+        var title = new Label { Left = 10, Top = 6, Width = 600, Height = 42, Text = "My Tasks", Font = new Font("Segoe UI", 22, FontStyle.Bold), Tag = "title" };
+        homeSummary = new Label { Left = 12, Top = 52, Width = 800, Height = 28, Tag = "muted", Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+        string[] labels = { "All tasks", "To do", "Completed" };
+        for (int i = 0; i < 3; i++) { int k = i; homeFilters[i] = Theme.Btn(labels[i], 12 + i * 132, 88, 124, "c"); homeFilters[i].Click += delegate { homeFilter = k; RefreshHome(); }; p.Controls.Add(homeFilters[i]); }
+        homeFlow = new FlowLayoutPanel { Left = 10, Top = 132, Width = 850, Height = 500, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+        p.Controls.AddRange(new Control[] { title, homeSummary, homeFlow });
+        p.Resize += delegate { homeFlow.Width = Math.Max(300, p.ClientSize.Width - 20); homeFlow.Height = Math.Max(120, p.ClientSize.Height - 142); RefreshHome(); };
+    }
+    void RefreshHome()
+    {
+        if (homeFlow == null) return;
+        homeSummary.Text = tasks.Count + " total  •  " + tasks.Count(t => !t.Done) + " to do  •  " + tasks.Count(t => t.Done) + " completed";
+        for (int i = 0; i < 3; i++) { homeFilters[i].BackColor = i == homeFilter ? Theme.Accent : Theme.Card; homeFilters[i].ForeColor = i == homeFilter ? Color.White : Theme.Text; }
+        homeFlow.SuspendLayout(); foreach (Control c in homeFlow.Controls.Cast<Control>().ToList()) { homeFlow.Controls.Remove(c); c.Dispose(); }
+        var list = tasks.Where(t => homeFilter == 0 || (homeFilter == 1 && !t.Done) || (homeFilter == 2 && t.Done)).ToList();
+        if (list.Count == 0) homeFlow.Controls.Add(new Label { Width = Math.Max(280, homeFlow.ClientSize.Width - 30), Height = 80, TextAlign = ContentAlignment.MiddleCenter, Tag = "muted", Text = tasks.Count == 0 ? "No tasks yet. Add your first task in Study Plan." : "No tasks in this section." });
+        foreach (var t in list)
+        {
+            var card = new Card { Width = Math.Max(280, homeFlow.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 12), Height = 62, Margin = new Padding(0, 0, 0, 8), Tag = "card" };
+            var status = new CheckBox { Left = 12, Top = 18, Width = 22, Height = 24, Checked = t.Done, Text = "", Tag = "flat" };
+            var name = new Label { Left = 42, Top = 8, Width = 420, Height = 24, Text = t.Title, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "title", AutoEllipsis = true };
+            var detail = new Label { Left = 42, Top = 32, Width = 420, Height = 20, Text = (t.Done ? "Completed" : "To do") + "  •  " + Studied(t.Title) + " / " + t.Target + " min studied", Tag = "muted" };
+            var open = Theme.Btn("Open", 0, 14, 74, "a"); open.Height = 32; open.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            card.Controls.AddRange(new Control[] { status, name, detail, open });
+            Action layout = delegate { open.Left = card.ClientSize.Width - 88; name.Width = detail.Width = Math.Max(100, open.Left - 54); }; card.Resize += delegate { layout(); }; layout();
+            status.CheckedChanged += delegate { t.Done = status.Checked; Save(); RefreshTasks(); RefreshHome(); };
+            open.Click += delegate { selTask = t; ShowPage(PAGE_PLAN); RefreshTasks(); };
+            homeFlow.Controls.Add(card);
+        }
+        homeFlow.ResumeLayout(); Theme.Skin(homeFlow);
+    }
+
+    // ---------- plan (task cards) ----------
+    int CardW() { return Math.Max(320, taskFlow.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 6); }
     void BuildPlan(Control p)
     {
-        lvTasks = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false, OwnerDraw = true, BorderStyle = BorderStyle.None, HideSelection = false };
-        lvTasks.SmallImageList = new ImageList { ImageSize = new Size(1, 46) }; // row height
-        lvTasks.Columns.Add("What to study", 360); lvTasks.Columns.Add("Target", 90); lvTasks.Columns.Add("Studied", 90); lvTasks.Columns.Add("Progress", 130); lvTasks.Columns.Add("Status", 110);
-        lvTasks.DrawColumnHeader += DrawTaskHead; lvTasks.DrawSubItem += DrawTaskRow;
-        p.Controls.Add(lvTasks);
-        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 100, BackColor = Theme.Bg };
-        var bLog = Theme.Btn("Log time", 0, 12, 110, "a"); var bDone = Theme.Btn("Toggle done", 118, 12, 120, "c"); var bDel = Theme.Btn("Delete", 246, 12, 90, "b");
-        btnRead = Theme.Btn("Start reading timer", 0, 56, 200, "b"); btnRead.Height = 36;
-        lblStatus = new Label { Left = 212, Top = 64, Width = 640, Height = 24, Tag = "muted", Text = "Pick a task, then start a timer. A small timer pops up at the side of your screen." };
-        bottom.Controls.AddRange(new Control[] { bLog, bDone, bDel, btnRead, lblStatus }); p.Controls.Add(bottom);
-        var top = new Panel { Dock = DockStyle.Top, Height = 54, BackColor = Theme.Bg };
-        txtTitle = new TextBox { Left = 0, Top = 12, Width = 380, Font = new Font("Segoe UI", 11) };
-        numTarget = new NumericUpDown { Left = 392, Top = 12, Width = 70, Minimum = 0, Maximum = 9999, Value = 60, Font = new Font("Segoe UI", 11) };
-        var bAdd = Theme.Btn("Add task", 560, 10, 110, "a");
-        top.Controls.AddRange(new Control[] { txtTitle, numTarget, new Label { Text = "min target", Left = 468, Top = 16, Width = 85 }, bAdd }); p.Controls.Add(top);
+        taskFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+        taskFlow.Resize += delegate { int w = CardW(); foreach (Control c in taskFlow.Controls) c.Width = w; };
+        p.Controls.Add(taskFlow);
+        lblStatus = new Label { Dock = DockStyle.Bottom, Height = 30, Tag = "muted", TextAlign = ContentAlignment.MiddleLeft, Text = "Click a card to select it (click empty space to deselect), or press Start for a pop-up reading timer." };
+        p.Controls.Add(lblStatus);
+        lblPlanSummary = new Label { Dock = DockStyle.Top, Height = 34, Tag = "muted", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+        p.Controls.Add(lblPlanSummary);
+        var holder = new Panel { Dock = DockStyle.Top, Height = 68, Padding = new Padding(0, 0, 0, 12) };
+        var bar2 = new Card { Dock = DockStyle.Fill };
+        txtTitle = new TextBox { Left = 20, Top = 15, Width = 300, Font = new Font("Segoe UI", 12), Tag = "flat" };
+        numTarget = new Stepper { Top = 10 };
+                var bAdd = Theme.Btn("Add task", 0, 10, 110, "a"); bAdd.Height = 36;
+        bar2.Controls.AddRange(new Control[] { txtTitle, numTarget, bAdd });
+        Action lay = delegate { int w = bar2.Width; bAdd.Left = w - 126; numTarget.Left = w - 262; txtTitle.Width = Math.Max(100, w - 262 - 34); };
+        bar2.Resize += delegate { lay(); }; lay();
+        holder.Controls.Add(bar2); p.Controls.Add(holder);
+        foreach (Control c0 in new Control[] { taskFlow, p, holder, bar2, lblPlanSummary, lblStatus }) c0.MouseDown += delegate { ClearSel(); };
+        txtTitle.HandleCreated += delegate { SendMessage(txtTitle.Handle, 0x1501, 1, "What are you studying today?"); };
         bAdd.Click += delegate { AddTask(); };
         txtTitle.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { AddTask(); e.SuppressKeyPress = true; } };
-        bLog.Click += delegate
-        {
-            var t = Selected(); if (t == null) return;
-            var m = Prompt("Log time", "Minutes studied on \"" + t.Title + "\":", "30"); int mi;
-            if (m == null || !int.TryParse(m, out mi) || mi < 1) return;
-            var pg = Prompt("Pages", "Pages read (0 to skip):", "0"); int pgs; int.TryParse(pg ?? "0", out pgs); AddSession(t, mi, pgs);
-        };
-        bDone.Click += delegate { var t = Selected(); if (t == null) return; t.Done = !t.Done; Save(); RefreshTasks(); };
-        bDel.Click += delegate { var t = Selected(); if (t == null) return; if (MessageBox.Show("Delete this task? Logged sessions are kept.", "Delete", MessageBoxButtons.YesNo) == DialogResult.Yes) { tasks.Remove(t); Save(); RefreshTasks(); } };
-        btnRead.Click += delegate { StartReading(); };
     }
-    void DrawTaskHead(object s, DrawListViewColumnHeaderEventArgs e)
+    void ClearSel()
     {
-        e.DrawDefault = false;
-        using (var b = new SolidBrush(Theme.Card)) e.Graphics.FillRectangle(b, e.Bounds);
-        TextRenderer.DrawText(e.Graphics, e.Header.Text, new Font("Segoe UI", 9.5f, FontStyle.Bold), e.Bounds, Theme.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        selTask = null;
+        foreach (Control o in taskFlow.Controls) { var tc = o as TaskCard; if (tc != null && tc.Selected) { tc.Selected = false; tc.Invalidate(); } }
     }
-    void DrawTaskRow(object s, DrawListViewSubItemEventArgs e)
+    TaskCard MakeCard(StudyTask t)
     {
-        var t = (StudyTask)e.Item.Tag; var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-        var r = new Rectangle(e.Bounds.X + 2, e.Bounds.Y + 3, e.Bounds.Width - 4, e.Bounds.Height - 6);
-        bool sel = e.Item.Selected;
-        using (var p = Theme.Round(r, 10))
-        {
-            Color fill = sel ? Color.FromArgb(70, Theme.Accent)
-                       : (e.ItemIndex % 2 == 0 ? Theme.Card : ControlPaint.Light(Theme.Card, Theme.Dark ? 0.08f : 0.5f));
-            using (var b = new SolidBrush(fill)) g.FillPath(b, p);
-            using (var pen = new Pen(sel ? Theme.Accent : Theme.Border, sel ? 2f : 1f)) g.DrawPath(pen, p);
-        }
-        int x = r.X + 10;
-        if (e.ColumnIndex == 0) // subject chip + title
-        {
-            using (var b = new SolidBrush(Theme.Accent2)) { var chip = new Rectangle(x, r.Y + r.Height / 2 - 9, 7, 18); using (var gp = Theme.Round(chip, 3)) g.FillPath(b, gp); }
-            x += 16;
-            TextRenderer.DrawText(g, t.Title, new Font("Segoe UI", 10, t.Done ? FontStyle.Strikeout | FontStyle.Bold : FontStyle.Bold), new Point(x, r.Y + (r.Height - 18) / 2), t.Done ? Theme.Accent : Theme.Text, TextFormatFlags.EndEllipsis);
-        }
-        else if (e.ColumnIndex == 1) TextRenderer.DrawText(g, t.Target > 0 ? t.Target + " min" : "no goal", Font, new Point(x, r.Y + (r.Height - 16) / 2), Theme.Muted);
-        else if (e.ColumnIndex == 2) TextRenderer.DrawText(g, Studied(t.Title) + " min", Font, new Point(x, r.Y + (r.Height - 16) / 2), Theme.Text);
-        else if (e.ColumnIndex == 3) // rounded progress bar
-        {
-            int pct = t.Target > 0 ? Math.Min(100, Studied(t.Title) * 100 / t.Target) : 0;
-            var tr = new Rectangle(x, r.Y + r.Height / 2 - 7, r.Width - 20, 14);
-            using (var bgp = Theme.Round(tr, 7)) { using (var b = new SolidBrush(Theme.Dark ? ControlPaint.Dark(Theme.Card, 0.05f) : Color.FromArgb(235, 245, 244))) g.FillPath(b, bgp); using (var pen = new Pen(Theme.Border)) g.DrawPath(pen, bgp); }
-            if (pct > 0) { var fw = Math.Max(14, tr.Width * pct / 100); using (var b = new SolidBrush(pct >= 100 ? Color.SeaGreen : Theme.Accent)) using (var fp = Theme.Round(new Rectangle(tr.X, tr.Y, fw, tr.Height), 7)) g.FillPath(b, fp); }
-        }
-        else if (e.ColumnIndex == 4)
-        {
-            Color c = t.Done ? Theme.Accent : (t.Target > 0 && Studied(t.Title) > 0 ? Theme.Accent3 : Theme.Muted);
-            TextRenderer.DrawText(g, t.Done ? "Done ✓" : "In progress", new Font("Segoe UI", 9, FontStyle.Bold), new Point(x, r.Y + (r.Height - 16) / 2), c);
-        }
+        int w = CardW();
+        var c = new TaskCard { T = t, Studied = Studied(t.Title), Width = w, Height = 88, Margin = new Padding(0, 0, 0, 10), Selected = t == selTask };
+        var bs = Theme.Btn("Start", w - 226, 14, 90, "a"); var bl = Theme.Btn("Log", w - 130, 14, 74, "c"); var bx = Theme.Btn("X", w - 48, 14, 34, "b");
+        bs.Height = bl.Height = bx.Height = 30; bs.Anchor = bl.Anchor = bx.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        c.Controls.AddRange(new Control[] { bs, bl, bx });
+        bs.Click += delegate { selTask = t; StartReading(); };
+        bl.Click += delegate { selTask = t; LogTime(t); };
+        bx.Click += delegate { if (MessageBox.Show("Delete this task? Logged sessions are kept.", "Delete", MessageBoxButtons.YesNo) == DialogResult.Yes) { tasks.Remove(t); if (selTask == t) selTask = null; Save(); RefreshTasks(); } };
+        c.OnSelect = k => { selTask = k.T; foreach (Control o in taskFlow.Controls) { var tc = o as TaskCard; if (tc != null) { tc.Selected = tc.T == selTask; tc.Invalidate(); } } };
+        c.OnToggle = k => { k.T.Done = !k.T.Done; Save(); RefreshTasks(); };
+        return c;
+    }
+    void LogTime(StudyTask t)
+    {
+        int mi, pgs; if (!AskMinutes("Log study time", t.Title, "How long did you study?", 30, true, out mi, out pgs)) return;
+        AddSession(t, mi, pgs);
     }
     void StartReading()
     {
         if (mini != null && !mini.IsDisposed) { mini.Show(); mini.TopMost = true; return; }
         var t = Selected(); if (t == null) return;
-        var m = Prompt("Reading timer", "How many minutes will you read? (e.g. 25)", "25"); int mins;
-        if (m == null || !int.TryParse(m, out mins) || mins < 1) return;
+        int mins, pgs0; if (!AskMinutes("Reading timer", t.Title, "How many minutes will you read?", 25, false, out mins, out pgs0)) return;
         miniTask = t; mini = new MiniTimer(t.Title, mins, muted);
         mini.Finished += (done, completed) =>
         {
@@ -604,7 +742,7 @@ class MainForm : Form
         };
         mini.Show(); lblStatus.Text = "Timer running on the side of your screen. Focus time!";
     }
-    StudyTask Selected() { if (lvTasks.SelectedItems.Count == 0) { MessageBox.Show("Select a task first — click a row in the list, it will light up."); return null; } return (StudyTask)lvTasks.SelectedItems[0].Tag; }
+    StudyTask Selected() { if (selTask == null || !tasks.Contains(selTask)) { MessageBox.Show("Select a task first - click one of the cards."); return null; } return selTask; }
     void AddTask()
     {
         var t = txtTitle.Text.Trim(); if (t == "") return;
@@ -618,15 +756,14 @@ class MainForm : Form
     }
     void RefreshTasks()
     {
-        if (lvTasks == null) return;
-        StudyTask keep = lvTasks.SelectedItems.Count > 0 ? lvTasks.SelectedItems[0].Tag as StudyTask : null;
-        lvTasks.Items.Clear();
-        foreach (var t in tasks)
-        {
-            var it = new ListViewItem(new string[] { t.Title, t.Target + "", Studied(t.Title) + "", "", "" });
-            it.Tag = t; lvTasks.Items.Add(it);
-            if (t == keep) it.Selected = true;
-        }
+        if (taskFlow == null) return;
+        taskFlow.SuspendLayout();
+        foreach (Control c in taskFlow.Controls.Cast<Control>().ToList()) { taskFlow.Controls.Remove(c); c.Dispose(); }
+        if (tasks.Count == 0) { var el = new Label { Width = CardW(), Height = 90, Tag = "muted", TextAlign = ContentAlignment.MiddleCenter, Text = "Nothing planned yet.\nType what you're studying above and press Add task." }; el.MouseDown += delegate { ClearSel(); }; taskFlow.Controls.Add(el); }
+        foreach (var t in tasks) taskFlow.Controls.Add(MakeCard(t));
+        taskFlow.ResumeLayout(); Theme.Skin(taskFlow);
+        lblPlanSummary.Text = tasks.Count + " task(s)   |   " + tasks.Count(x => x.Done) + " done   |   " + sessions.Where(x => x.Date == Today()).Sum(x => x.Minutes) + " min studied today";
+        FillCombo(); RefreshHome();
     }
 
     // ---------- focus timer (Pomodoro) ----------
@@ -647,11 +784,13 @@ class MainForm : Form
         var bSet = Theme.Btn("Set", 238, 46, 70, "c");
         bStart = Theme.Btn("Start", 0, 92, 180, "a"); bStart.Height = 44; bStart.Font = new Font("Segoe UI", 12, FontStyle.Bold);
         bReset = Theme.Btn("Reset", 188, 96, 120, "b"); bReset.Height = 40;
+        bSound = Theme.Btn(muted ? "Sound: Off" : "Sound: On", 316, 96, 120, "c"); bSound.Height = 40;
+        bSound.Click += delegate { muted = !muted; bSound.Text = muted ? "Sound: Off" : "Sound: On"; Save(); };
         chkLog = new CheckBox { Left = 0, Top = 150, Width = 400, Text = "Auto-log completed focus blocks to a subject", Checked = true };
         var lblSub = new Label { Left = 0, Top = 182, Width = 160, Text = "Log focus time to:", Tag = "muted" };
         cbSub = new ComboBox { Left = 160, Top = 178, Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10) };
         lblFocusStatus = new Label { Left = 0, Top = 220, Width = 560, Height = 44, Tag = "muted", Text = "Completed focus blocks: 0" };
-        right.Controls.AddRange(new Control[] { bFocus, bShort, bLong, lblCustom, numFocusMin, bSet, bStart, bReset, chkLog, lblSub, cbSub, lblFocusStatus });
+        right.Controls.AddRange(new Control[] { bFocus, bShort, bLong, lblCustom, numFocusMin, bSet, bStart, bReset, bSound, chkLog, lblSub, cbSub, lblFocusStatus });
         p.Controls.AddRange(new Control[] { title, sub, ring, right });
         bFocus.Click += delegate { SetMode("focus", 25); };
         bShort.Click += delegate { SetMode("short", 5); };
@@ -664,7 +803,7 @@ class MainForm : Form
         fTimer.Tick += delegate
         {
             if (!frunning) return;
-            fleft--; UpdateRing();
+            fleft--; UpdateRing(); if (fleft > 0 && fleft <= 5 && !muted) System.Media.SystemSounds.Beep.Play();
             if (fleft <= 0) FocusDone();
         };
         fTimer.Start(); // FIX: the timer must actually run; it no-ops while frunning == false
@@ -702,10 +841,13 @@ class MainForm : Form
         if (fmode == "focus")
         {
             focusCount++; lblFocusStatus.Text = "Completed focus blocks: " + focusCount + "  —  " + quotes[(focusCount + DateTime.Today.DayOfYear) % quotes.Length];
-            string subject = cbSub.SelectedItem as string; if (string.IsNullOrEmpty(subject)) subject = "Focus session";
-            var t = tasks.FirstOrDefault(x => x.Title == subject);
-            if (t != null) AddSession(t, ftotal / 60, 0);
-            else { sessions.Add(new Sess { Date = Today(), Subject = subject, Minutes = ftotal / 60, Pages = 0 }); Save(); RefreshStats(); RefreshStreak(); }
+            if (chkLog != null && chkLog.Checked)
+            {
+                string subject = cbSub.SelectedItem as string; if (string.IsNullOrEmpty(subject)) subject = "Focus session";
+                var t = tasks.FirstOrDefault(x => x.Title == subject);
+                if (t != null) AddSession(t, ftotal / 60, 0);
+                else { sessions.Add(new Sess { Date = Today(), Subject = subject, Minutes = ftotal / 60, Pages = 0 }); Save(); RefreshStats(); RefreshStreak(); }
+            }
             SetMode("short", 5);
         }
         else SetMode("focus", (int)numFocusMin.Value);
@@ -724,14 +866,17 @@ class MainForm : Form
     // ---------- stats ----------
     void BuildStats(Control p)
     {
-        lbSubjects = new ListBox { Dock = DockStyle.Fill, Font = new Font("Consolas", 10) }; p.Controls.Add(lbSubjects);
-        chart = new Card { Dock = DockStyle.Top, Height = 210 }; chart.Paint += DrawChart; p.Controls.Add(chart);
-        bar = new ProgressBar { Dock = DockStyle.Top, Height = 22, Maximum = 100 }; p.Controls.Add(bar);
-        var g = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = Color.Transparent };
+        var right = new Panel { Dock = DockStyle.Fill }; var left = new Panel { Dock = DockStyle.Left, Width = 420, Padding = new Padding(0, 0, 14, 0) };
+        p.Controls.Add(right); p.Controls.Add(left);
+        lbSubjects = new ListBox { Dock = DockStyle.Fill, Font = new Font("Consolas", 10) }; left.Controls.Add(lbSubjects);
+        chart = new Card { Dock = DockStyle.Top, Height = 210 }; chart.Paint += DrawChart; left.Controls.Add(chart);
+        bar = new ProgressBar { Dock = DockStyle.Top, Height = 22, Maximum = 100 }; left.Controls.Add(bar);
+        var g = new Panel { Dock = DockStyle.Top, Height = 40 };
         numGoal = new NumericUpDown { Left = 190, Top = 6, Width = 80, Minimum = 5, Maximum = 1440, Value = Math.Min(1440, Math.Max(5, goal)) };
         numGoal.ValueChanged += delegate { goal = (int)numGoal.Value; Save(); RefreshStats(); RefreshStreak(); };
-        g.Controls.AddRange(new Control[] { new Label { Left = 0, Top = 10, Width = 185, Text = "Daily goal (minutes):" }, numGoal }); p.Controls.Add(g);
-        lblSummary = new Label { Dock = DockStyle.Top, Height = 40, Font = new Font("Segoe UI", 13, FontStyle.Bold), Tag = "title", TextAlign = ContentAlignment.MiddleLeft }; p.Controls.Add(lblSummary);
+        g.Controls.AddRange(new Control[] { new Label { Left = 0, Top = 10, Width = 185, Text = "Daily goal (minutes):" }, numGoal }); left.Controls.Add(g);
+        lblSummary = new Label { Dock = DockStyle.Top, Height = 36, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "title", TextAlign = ContentAlignment.MiddleLeft }; left.Controls.Add(lblSummary);
+        BuildStreak(right);
     }
     Dictionary<string, int> ByDay()
     {
@@ -783,68 +928,75 @@ class MainForm : Form
     // ---------- streak calendar (monthly heatmap) ----------
     void BuildStreak(Control p)
     {
-        var title = new Label { Left = 10, Top = 6, Width = 400, Height = 44, Text = "Streaks", Font = new Font("Segoe UI", 22, FontStyle.Bold), Tag = "title" };
-        lblStreak = new Label { Left = 12, Top = 54, Width = 700, Height = 28, Font = new Font("Segoe UI", 12.5f, FontStyle.Bold), Tag = "sub" };
-        heat = new Card { Left = 12, Top = 92, Width = 560, Height = 400 }; heat.Paint += DrawHeat; heat.MouseMove += HeatHover;
-        bPrev = Theme.Btn("◀", 12, 508, 50, "c"); bNext = Theme.Btn("▶", 70, 508, 50, "c"); bThisMonth = Theme.Btn("This month", 128, 508, 120, "b");
-        var legend = new Label { Left = 260, Top = 512, Width = 320, Height = 40, Tag = "muted", Text = "Darker = more minutes. Reaching your daily goal turns a day green." };
-        p.Controls.AddRange(new Control[] { title, lblStreak, heat, bPrev, bNext, bThisMonth, legend });
+        heat = new Card { Dock = DockStyle.Fill }; heat.Paint += DrawHeat; heat.MouseClick += HeatClick; p.Controls.Add(heat);
+        p.Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 10 });
+        var detail = new Card { Dock = DockStyle.Bottom, Height = 150, Padding = new Padding(16, 10, 16, 10) };
+        lbDay = new ListBox { Dock = DockStyle.Fill, Tag = "flat", Font = new Font("Segoe UI", 10) };
+        lblDayInfo = new Label { Dock = DockStyle.Top, Height = 44, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "title" };
+        detail.Controls.Add(lbDay); detail.Controls.Add(lblDayInfo); p.Controls.Add(detail);
+        p.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 8 });
+        var nav2 = new Panel { Dock = DockStyle.Top, Height = 42 };
+        bPrev = Theme.Btn("<", 0, 5, 44, "c"); bNext = Theme.Btn(">", 50, 5, 44, "c"); bThisMonth = Theme.Btn("This month", 100, 5, 110, "b");
+        nav2.Controls.AddRange(new Control[] { bPrev, bNext, bThisMonth, new Label { Left = 222, Top = 12, Width = 200, Height = 22, Tag = "muted", Text = "Green = daily goal reached" } });
+        p.Controls.Add(nav2);
+        lblStreak = new Label { Dock = DockStyle.Top, Height = 26, Font = new Font("Segoe UI", 10, FontStyle.Bold), Tag = "sub" }; p.Controls.Add(lblStreak);
+        p.Controls.Add(new Label { Dock = DockStyle.Top, Height = 32, Text = "Streaks", Font = new Font("Segoe UI", 15, FontStyle.Bold), Tag = "title" });
         bPrev.Click += delegate { viewMonth = viewMonth.AddMonths(-1); heat.Invalidate(); };
         bNext.Click += delegate { viewMonth = viewMonth.AddMonths(1); heat.Invalidate(); };
         bThisMonth.Click += delegate { viewMonth = DateTime.Today; heat.Invalidate(); };
+        ShowDay(DateTime.Today);
     }
     void RefreshStreak()
     {
         if (lblStreak == null) return;
         int c, b; Streaks(out c, out b);
-        lblStreak.Text = "Current streak: " + c + " day(s)  ·  Best: " + b + " days";
+        lblStreak.Text = "Current streak: " + c + " day(s)   |   Best: " + b + "   |   Days studied: " + sessions.Where(x => x.Minutes > 0).Select(x => x.Date).Distinct().Count();
+        ShowDay(selDay);
+    }
+    void ShowDay(DateTime d)
+    {
+        selDay = d; string k = Key(d); var list = sessions.Where(x => x.Date == k).ToList();
+        lblDayInfo.Text = d.ToString("dddd, d MMM yyyy", CultureInfo.CurrentCulture) + "\n" + list.Sum(x => x.Minutes) + " min in " + list.Count + " session(s)";
+        lbDay.Items.Clear();
+        if (list.Count == 0) lbDay.Items.Add("Nothing logged this day.");
+        foreach (var x in list) lbDay.Items.Add(x.Minutes + " min  -  " + x.Subject + (x.Pages > 0 ? "  (" + x.Pages + " pages)" : ""));
         heat.Invalidate();
     }
-    void HeatHover(object s, MouseEventArgs e)
+    void HeatGeom(out int cell, out int gap, out int x0, out int y0)
     {
-        var dim = DateTime.DaysInMonth(viewMonth.Year, viewMonth.Month);
-        int cell = 62, gap = 6, x0 = 14, y0 = 46;
+        gap = 5; y0 = 64; int byW = (heat.Width - 28 - 6 * gap) / 7, byH = (heat.Height - y0 - 14 - 5 * gap) / 6;
+        cell = Math.Max(20, Math.Min(byW, byH)); x0 = (heat.Width - (7 * cell + 6 * gap)) / 2;
+    }
+    void HeatClick(object s, MouseEventArgs e)
+    {
+        int cell, gap, x0, y0; HeatGeom(out cell, out gap, out x0, out y0);
+        if (e.X < x0 || e.Y < y0) return;
         int col = (e.X - x0) / (cell + gap), row = (e.Y - y0) / (cell + gap);
-        int first = (int)new DateTime(viewMonth.Year, viewMonth.Month, 1).DayOfWeek;
-        int day = col * 7 + row + 1 - first;
-        heat.Refresh();
-        if (day >= 1 && day <= dim)
-        {
-            var by = ByDay(); int v; by.TryGetValue(Key(new DateTime(viewMonth.Year, viewMonth.Month, day)), out v);
-            using (var g = heat.CreateGraphics())
-            {
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                var r = new Rectangle(x0 + col * (cell + gap), y0 + row * (cell + gap), cell, cell);
-                using (var pen = new Pen(Theme.Accent, 2)) using (var gp = Theme.Round(r, 10)) g.DrawPath(pen, gp);
-                TextRenderer.DrawText(g, v + " min", new Font("Segoe UI", 9, FontStyle.Bold), new Rectangle(r.X + 4, r.Bottom - 24, cell - 8, 18), Theme.Text, TextFormatFlags.EndEllipsis);
-            }
-        }
+        if (col > 6 || row > 5) return;
+        int first = ((int)new DateTime(viewMonth.Year, viewMonth.Month, 1).DayOfWeek + 6) % 7, day = row * 7 + col + 1 - first;
+        if (day >= 1 && day <= DateTime.DaysInMonth(viewMonth.Year, viewMonth.Month)) ShowDay(new DateTime(viewMonth.Year, viewMonth.Month, day));
     }
     void DrawHeat(object sender, PaintEventArgs e)
     {
-        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-        var by = ByDay(); int goalV = goal;
-        TextRenderer.DrawText(g, viewMonth.ToString("MMMM yyyy", CultureInfo.CurrentCulture), new Font("Segoe UI", 13, FontStyle.Bold), new Point(14, 12), Theme.Text);
-        string[] wds = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-        int cell = 62, gap = 6, x0 = 14, y0 = 46;
-        int first = (int)new DateTime(viewMonth.Year, viewMonth.Month, 1).DayOfWeek;
-        var dim = DateTime.DaysInMonth(viewMonth.Year, viewMonth.Month);
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; var by = ByDay();
+        TextRenderer.DrawText(g, viewMonth.ToString("MMMM yyyy", CultureInfo.CurrentCulture), new Font("Segoe UI", 13, FontStyle.Bold), new Point(16, 12), Theme.Text);
+        string[] wds = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+        int cell, gap, x0, y0; HeatGeom(out cell, out gap, out x0, out y0);
+        for (int i = 0; i < 7; i++) TextRenderer.DrawText(g, wds[i], new Font("Segoe UI", 8), new Rectangle(x0 + i * (cell + gap), y0 - 20, cell, 16), Theme.Muted, TextFormatFlags.HorizontalCenter);
+        int first = ((int)new DateTime(viewMonth.Year, viewMonth.Month, 1).DayOfWeek + 6) % 7, dim = DateTime.DaysInMonth(viewMonth.Year, viewMonth.Month);
         for (int day = 1; day <= dim; day++)
         {
-            int slot = first + day - 1, col = slot / 7, row = slot % 7;
-            var dt = new DateTime(viewMonth.Year, viewMonth.Month, day);
-            int v; by.TryGetValue(Key(dt), out v);
-            Color fill;
+            int slot = first + day - 1, col = slot % 7, row = slot / 7; var dt = new DateTime(viewMonth.Year, viewMonth.Month, day);
+            int v; by.TryGetValue(Key(dt), out v); Color fill;
             if (v <= 0) fill = Theme.Dark ? ControlPaint.Dark(Theme.Card, 0.04f) : Color.FromArgb(238, 246, 245);
-            else if (v >= goalV) fill = Color.SeaGreen;
-            else { float ratio = Math.Min(1f, v / (float)Math.Max(1, goalV)); fill = Color.FromArgb((int)(40 + 120 * ratio), Theme.Accent); }
+            else if (v >= goal) fill = Color.SeaGreen;
+            else { float ratio = Math.Min(1f, v / (float)Math.Max(1, goal)); fill = Color.FromArgb((int)(60 + 140 * ratio), Theme.Accent); }
             var r = new Rectangle(x0 + col * (cell + gap), y0 + row * (cell + gap), cell, cell);
-            using (var b = new SolidBrush(fill)) using (var gp = Theme.Round(r, 10)) g.FillPath(b, gp);
-            using (var pen = new Pen(Theme.Border)) using (var gp = Theme.Round(r, 10)) g.DrawPath(pen, gp);
-            if (dt == DateTime.Today) using (var pen = new Pen(Theme.Accent2, 2)) using (var gp = Theme.Round(new Rectangle(r.X - 2, r.Y - 2, r.Width + 4, r.Height + 4), 11)) g.DrawPath(pen, gp);
-            TextRenderer.DrawText(g, day.ToString(), new Font("Segoe UI", 9.5f, FontStyle.Bold), new Point(r.X + 7, r.Y + 5), v > 0 ? Theme.Text : Theme.Muted);
+            using (var gp = Theme.Round(r, 10)) { using (var b = new SolidBrush(fill)) g.FillPath(b, gp); using (var pen = new Pen(Theme.Border)) g.DrawPath(pen, gp); }
+            if (dt == DateTime.Today) using (var pen = new Pen(Theme.Accent2, 2)) using (var gp = Theme.Round(Rectangle.Inflate(r, 1, 1), 11)) g.DrawPath(pen, gp);
+            if (dt == selDay.Date) using (var pen = new Pen(Theme.Text, 2)) using (var gp = Theme.Round(Rectangle.Inflate(r, 2, 2), 12)) g.DrawPath(pen, gp);
+            TextRenderer.DrawText(g, day.ToString(), new Font("Segoe UI", 9, FontStyle.Bold), r, v > 0 ? Color.White : Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
-        for (int i = 0; i < 7; i++) TextRenderer.DrawText(g, wds[i], new Font("Segoe UI", 8), new Point(x0 + i * (cell + gap) + 4, y0 - 18), Theme.Muted);
     }
 
     // ---------- files ----------
@@ -895,6 +1047,19 @@ class MainForm : Form
         try { Process.Start(new ProcessStartInfo((string)it.Tag) { UseShellExecute = true }); } catch (Exception ex) { MessageBox.Show(ex.Message); }
     }
 
+    void SetFontFamily(Control parent, string family)
+    {
+        foreach (Control c in parent.Controls) { try { c.Font = new Font(family, c.Font.Size, c.Font.Style); } catch { } if (c.Controls.Count > 0) SetFontFamily(c, family); }
+    }
+    void ScaleFonts(Control parent, float ratio)
+    {
+        foreach (Control c in parent.Controls)
+        {
+            try { c.Font = new Font(c.Font.FontFamily, Math.Max(8f, Math.Min(24f, c.Font.Size * ratio)), c.Font.Style); } catch { }
+            if (c.Controls.Count > 0) ScaleFonts(c, ratio);
+        }
+    }
+
     // ---------- about ----------
     void BuildAbout(Control p)
     {
@@ -915,19 +1080,36 @@ class MainForm : Form
     // ---------- updates ----------
     static string Fmt(DateTime d) { return d == DateTime.MinValue ? "never" : d.ToLocalTime().ToString("dd MMM yyyy, HH:mm", CultureInfo.CurrentCulture); }
     void Ui(Action a) { try { if (!IsDisposed && IsHandleCreated) BeginInvoke(a); } catch { } }
-    void BuildUpdates(Control p)
+    void BuildSettings(Control p)
     {
-        var title = new Label { Left = 10, Top = 6, Width = 600, Height = 44, Text = "Updates", Font = new Font("Segoe UI", 22, FontStyle.Bold), Tag = "title" };
+        var title = new Label { Left = 10, Top = 6, Width = 600, Height = 44, Text = "Settings", Font = new Font("Segoe UI", 22, FontStyle.Bold), Tag = "title" };
+        var appearance = new Label { Left = 10, Top = 52, Width = 400, Height = 28, Text = "Appearance & profile", Font = new Font("Segoe UI", 13, FontStyle.Bold), Tag = "sub" };
+        var nameLabel = new Label { Left = 10, Top = 88, Width = 90, Height = 28, Text = "Your name", Tag = "muted" };
+        var nameBox = new TextBox { Left = 105, Top = 84, Width = 220, Height = 28, Text = userName, Tag = "flat" };
+        var saveName = Theme.Btn("Save name", 336, 82, 110, "a"); saveName.Height = 32;
+        saveName.Click += delegate { if (!string.IsNullOrWhiteSpace(nameBox.Text)) { userName = nameBox.Text.Trim(); Save(); Greet(); } };
+        var themeLabel = new Label { Left = 10, Top = 128, Width = 90, Height = 28, Text = "Theme", Tag = "muted" };
+        var themePick = new ComboBox { Left = 105, Top = 124, Width = 150, DropDownStyle = ComboBoxStyle.DropDownList }; themePick.Items.AddRange(new object[] { "Dark", "Light" }); themePick.SelectedIndex = Theme.Dark ? 0 : 1;
+        themePick.SelectedIndexChanged += delegate { Theme.Apply(themePick.SelectedIndex == 0, Theme.Pal); Recolor(); };
+        var colorPick = Theme.Btn("Change accent colour", 270, 122, 180, "c"); colorPick.Height = 32; colorPick.Click += delegate { Theme.Apply(Theme.Dark, Theme.Pal + 1); Recolor(); };
+        var familyLabel = new Label { Left = 10, Top = 168, Width = 90, Height = 28, Text = "Font", Tag = "muted" };
+        var familyPick = new ComboBox { Left = 105, Top = 164, Width = 150, DropDownStyle = ComboBoxStyle.DropDownList }; familyPick.Items.AddRange(new object[] { "Segoe UI", "Arial", "Calibri", "Consolas" }); familyPick.SelectedItem = uiFontFamily;
+        familyPick.SelectedIndexChanged += delegate { if (familyPick.SelectedItem != null) { uiFontFamily = familyPick.SelectedItem.ToString(); SetFontFamily(this, uiFontFamily); Save(); } };
+        var fontLabel = new Label { Left = 10, Top = 208, Width = 90, Height = 28, Text = "Font size", Tag = "muted" };
+        var fontPick = new ComboBox { Left = 105, Top = 204, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList }; fontPick.Items.AddRange(new object[] { "Small", "Normal", "Large", "Extra large" }); fontPick.SelectedIndex = uiFontSize < 9.5f ? 0 : uiFontSize < 11f ? 1 : uiFontSize < 13f ? 2 : 3;
+        fontPick.SelectedIndexChanged += delegate { float next = new float[] { 9f, 10f, 12f, 14f }[fontPick.SelectedIndex]; float ratio = next / uiFontSize; ScaleFonts(this, ratio); uiFontSize = next; Save(); };
+        var updatesHead = new Label { Left = 10, Top = 246, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 13, FontStyle.Bold), Tag = "sub" };
         lblVer = new Label { Left = 10, Top = 54, Width = 700, Height = 28, Font = new Font("Segoe UI", 13, FontStyle.Bold) };
-        lblUpdInfo = new Label { Left = 10, Top = 88, Width = 800, Height = 66, Tag = "muted" };
-        lblUpdStatus = new Label { Left = 10, Top = 160, Width = 820, Height = 30, Font = new Font("Segoe UI", 12, FontStyle.Bold), Tag = "white" };
-        bCheck = Theme.Btn("Check for updates", 10, 200, 190, "a"); bCheck.Height = 38;
-        bInstall = Theme.Btn("Install update now", 210, 200, 190, "c"); bInstall.Height = 38; bInstall.Visible = false;
-        prog = new ProgressBar { Left = 410, Top = 212, Width = 300, Height = 14, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
-        rbAuto = new RadioButton { Left = 10, Top = 260, Width = 820, Height = 26, Text = "Automatic: check about once a day (when you open the app or reconnect) and install updates for me", Checked = autoMode };
-        rbManual = new RadioButton { Left = 10, Top = 290, Width = 820, Height = 26, Text = "Manual: just show an orange dot when an update is available", Checked = !autoMode };
-        var note = new Label { Left = 10, Top = 332, Width = 820, Height = 60, Tag = "muted", Text = "Updates come from github.com/kjnrmbiriri01/Study-Tracker. The app compares the repository's last change with your installed date, downloads the files to a temporary folder, installs the new version, restarts, and deletes the temporary files. Your data is never touched. Automatic checks run at most once per calendar day." };
-        p.Controls.AddRange(new Control[] { title, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
+        lblUpdInfo = new Label { Left = 10, Top = 88, Width = 800, Height = 42, Tag = "muted" };
+        lblUpdStatus = new Label { Left = 10, Top = 136, Width = 820, Height = 30, Font = new Font("Segoe UI", 12, FontStyle.Bold), Tag = "white" };
+        bCheck = Theme.Btn("Check for updates", 10, 176, 190, "a"); bCheck.Height = 38;
+        bInstall = Theme.Btn("Install update now", 210, 176, 190, "c"); bInstall.Height = 38; bInstall.Visible = false;
+        prog = new ProgressBar { Left = 410, Top = 188, Width = 300, Height = 14, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
+        rbAuto = new RadioButton { Left = 10, Top = 226, Width = 820, Height = 26, Text = "Automatic updates", Checked = autoMode };
+        rbManual = new RadioButton { Left = 10, Top = 256, Width = 820, Height = 26, Text = "Notify me; let me install updates", Checked = !autoMode };
+        var note = new Label { Left = 10, Top = 350, Width = 820, Height = 28, Tag = "muted", Text = "Your study data stays on this computer during updates." };
+        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
+        lblVer.Top = 280; lblUpdInfo.Top = 312; lblUpdStatus.Top = 356; bCheck.Top = 396; bInstall.Top = 396; prog.Top = 408; rbAuto.Top = 442; rbManual.Top = 472; note.Top = 506;
         bCheck.Click += delegate { CheckNow(true); };
         bInstall.Click += delegate { InstallUpdate(false); };
         rbAuto.CheckedChanged += delegate { autoMode = rbAuto.Checked; Save(); };
@@ -937,30 +1119,30 @@ class MainForm : Form
         if (lblVer == null) return;
         updateAvailable = latest != DateTime.MinValue && latest > stamp;
         lblVer.Text = "Study Tracker  v" + Updater.Version;
-        lblUpdInfo.Text = "Installed / last updated:  " + Fmt(stamp) + "\nLast checked:  " + Fmt(lastCheck) + "\nLatest change on GitHub:  " + (latest == DateTime.MinValue ? "unknown" : Fmt(latest));
+        lblUpdInfo.Text = "Version " + Updater.Version + "  •  Last checked: " + Fmt(lastCheck);
         if (updateAvailable) { lblUpdStatus.Text = "An update is available!"; lblUpdStatus.ForeColor = ColorTranslator.FromHtml("#E08A00"); }
         else { lblUpdStatus.Text = latest == DateTime.MinValue ? "Not checked yet. Press \"Check for updates\"." : "You're up to date."; lblUpdStatus.ForeColor = Theme.Accent; }
         bInstall.Visible = updateAvailable; Text = updateAvailable ? "Study Tracker  -  update available" : "Study Tracker";
-        if (nav[PAGE_UPDATES] != null) nav[PAGE_UPDATES].Invalidate();
+        if (nav[PAGE_SETTINGS] != null) nav[PAGE_SETTINGS].Invalidate();
     }
     void NavDot(object s, PaintEventArgs e)
     {
         if (!updateAvailable) return;
-        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; int x = nav[PAGE_UPDATES].Width - 22;
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; int x = nav[PAGE_SETTINGS].Width - 22;
         using (var br = new SolidBrush(ColorTranslator.FromHtml(blink ? "#FFD21F" : "#FF8A00"))) g.FillEllipse(br, x, 7, 13, 13);
         using (var pen = new Pen(Color.White, 1.5f)) g.DrawEllipse(pen, x, 7, 13, 13);
     }
     void StartTimers()
     {
-        dotTimer = new Timer { Interval = 500 }; dotTimer.Tick += delegate { blink = !blink; if (updateAvailable) nav[PAGE_UPDATES].Invalidate(); }; dotTimer.Start();
+        dotTimer = new Timer { Interval = 500 }; dotTimer.Tick += delegate { blink = !blink; if (updateAvailable) nav[PAGE_SETTINGS].Invalidate(); }; dotTimer.Start();
         hourTimer = new Timer { Interval = 3600000 }; hourTimer.Tick += delegate { AutoCheck(); }; hourTimer.Start();
         // also check immediately when internet (re)connects — still at most once per calendar day
         NetworkChange.NetworkAvailabilityChanged += delegate { Ui(delegate { AutoCheck(); }); };
     }
     void AutoCheck()
     {
-        // daily: check at most once per calendar day (UTC)
-        if (!busy && (lastCheck == DateTime.MinValue || lastCheck.Date != DateTime.UtcNow.Date)) CheckNow(false);
+        // daily: at most one successful check per local calendar day; failures (offline) retry hourly / on reconnect
+        if (!busy && (lastCheck == DateTime.MinValue || lastCheck.ToLocalTime().Date != DateTime.Now.Date)) CheckNow(false);
     }
     void SetBusy(bool on, string msg)
     {
@@ -1008,14 +1190,11 @@ class MainForm : Form
 
     string Prompt(string title, string label, string def)
     {
-        using (var f = new Form())
-        {
-            f.Text = title; f.FormBorderStyle = FormBorderStyle.FixedDialog; f.StartPosition = FormStartPosition.CenterParent; f.ClientSize = new Size(390, 120); f.MaximizeBox = false; f.MinimizeBox = false; f.BackColor = Theme.Bg;
-            var l = new Label { Text = label, Left = 14, Top = 12, Width = 360 }; var t = new TextBox { Left = 14, Top = 44, Width = 360, Text = def };
-            var ok = Theme.Btn("OK", 294, 78, 80, "a"); ok.Height = 30; ok.DialogResult = DialogResult.OK;
-            f.Controls.AddRange(new Control[] { l, t, ok }); f.AcceptButton = ok; Theme.Skin(f);
-            return f.ShowDialog(this) == DialogResult.OK ? t.Text : null;
-        }
+        using (var f = new AskForm(title, label, def)) return f.ShowDialog(this) == DialogResult.OK ? f.Answer : null;
+    }
+    bool AskMinutes(string title, string sub, string label, int def, bool pages, out int mins, out int pgs)
+    {
+        using (var f = new AskForm(title, sub, label, def, pages)) { bool ok = f.ShowDialog(this) == DialogResult.OK; mins = f.Minutes; pgs = f.Pages; return ok; }
     }
 }
 
@@ -1024,7 +1203,7 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        Application.EnableVisualStyles(); Theme.Apply(false, 0);
+        Application.EnableVisualStyles(); Theme.Apply(true, 0);
         if (args.Length > 0 && args[0] == "/uninstall") { Installer.Uninstall(null); return; }
         if (!Installer.RunningInstalled())
         {
