@@ -6,6 +6,9 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
+using System.Net;
+using System.Text.RegularExpressions;
 using System.Linq;
 using System.Media;
 using System.Reflection;
@@ -61,7 +64,7 @@ static class Theme
             if (k is Button) { if (tag != "nav") { var b = (Button)k; b.BackColor = tag == "b" ? Accent2 : tag == "c" ? Accent3 : Accent; b.ForeColor = tag == "c" ? Base : Color.White; } }
             else if (k is LinkLabel) { var l = (LinkLabel)k; l.LinkColor = Accent; l.ActiveLinkColor = Accent2; l.BackColor = Color.Transparent; }
             else if (k is Label) { k.BackColor = Color.Transparent; if (tag != "white") k.ForeColor = tag == "muted" ? Muted : tag == "title" ? Accent : tag == "sub" ? Accent2 : Text; }
-            else if (k is CheckBox) { k.ForeColor = Text; k.BackColor = Color.Transparent; }
+            else if (k is CheckBox || k is RadioButton) { k.ForeColor = Text; k.BackColor = Color.Transparent; }
             else if (k is TextBox) { k.BackColor = Card; k.ForeColor = Text; ((TextBox)k).BorderStyle = BorderStyle.FixedSingle; }
             else if (k is NumericUpDown) { k.BackColor = Card; k.ForeColor = Text; }
             else if (k is ListView) { k.BackColor = Card; k.ForeColor = Text; ((ListView)k).BorderStyle = BorderStyle.FixedSingle; }
@@ -131,11 +134,11 @@ static class Installer
         lt.InvokeMember("IconLocation", BindingFlags.SetProperty, null, l, new object[] { icon });
         lt.InvokeMember("Save", BindingFlags.InvokeMethod, null, l, null);
     }
-    static bool CanWrite(string dir)
+    public static bool CanWrite(string dir)
     {
         try { Directory.CreateDirectory(dir); string f = Path.Combine(dir, "~w.tmp"); File.WriteAllText(f, "x"); File.Delete(f); return true; } catch { return false; }
     }
-    static bool RunBat(List<string> lines, bool elevate, bool wait)
+    public static bool RunBat(List<string> lines, bool elevate, bool wait)
     {
         string bat = Path.Combine(Path.GetTempPath(), "st_" + Guid.NewGuid().ToString("N") + ".bat");
         lines.Insert(0, "@echo off"); lines.Add("del \"%~f0\"");
@@ -198,6 +201,87 @@ static class Installer
         RunBat(l, !CanWrite(dir), false);
         MessageBox.Show(owner, "Study Tracker has been uninstalled. Thanks for using it!", "Uninstall");
         return true;
+    }
+}
+
+// ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
+static class Updater
+{
+    public const string Version = "4.0";
+    const string Owner = "kjnrmbiriri01", Repo = "Study-Tracker";
+    public static string TempRoot { get { return Path.Combine(Path.GetTempPath(), "StudyTrackerUpdate"); } }
+    static WebClient Client()
+    {
+        try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; } catch { }
+        var wc = new WebClient(); wc.Headers[HttpRequestHeader.UserAgent] = "StudyTracker-Updater"; wc.Encoding = Encoding.UTF8; return wc;
+    }
+    // date of the latest commit on the repo's default branch (UTC)
+    public static bool GetLatest(out DateTime utc, out string err)
+    {
+        utc = DateTime.MinValue; err = null;
+        try
+        {
+            using (var wc = Client())
+            {
+                string json = wc.DownloadString("https://api.github.com/repos/" + Owner + "/" + Repo + "/commits?per_page=1");
+                var m = Regex.Match(json, "\"committer\"\\s*:\\s*\\{[^{}]*?\"date\"\\s*:\\s*\"([^\"]+)\"");
+                if (!m.Success || !DateTime.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out utc))
+                { err = "Unexpected reply from GitHub."; return false; }
+                return true;
+            }
+        }
+        catch (WebException e)
+        {
+            var r = e.Response as HttpWebResponse;
+            err = (r != null && r.StatusCode == HttpStatusCode.NotFound) ? "Repository not found (it must be public)." : e.Message; return false;
+        }
+        catch (Exception e) { err = e.Message; return false; }
+    }
+    public static void Cleanup() { try { Directory.Delete(TempRoot, true); } catch { } }
+    // downloads + unpacks into the temp folder and returns the path of the new StudyTracker.exe
+    public static string Prepare(Action<string> say)
+    {
+        Cleanup(); Directory.CreateDirectory(TempRoot);
+        string zip = Path.Combine(TempRoot, "repo.zip"), ext = Path.Combine(TempRoot, "files");
+        say("Downloading the update from GitHub...");
+        using (var wc = Client()) wc.DownloadFile("https://github.com/" + Owner + "/" + Repo + "/archive/HEAD.zip", zip);
+        say("Unpacking...");
+        ZipFile.ExtractToDirectory(zip, ext);
+        string cs = Directory.GetFiles(ext, "StudyTracker.cs", SearchOption.AllDirectories).FirstOrDefault();
+        string ready = Directory.GetFiles(ext, "StudyTracker.exe", SearchOption.AllDirectories).FirstOrDefault();
+        if (cs == null && ready == null) throw new Exception("The repository has no StudyTracker.cs or StudyTracker.exe.");
+        if (cs != null)
+        {
+            say("Building the new version...");
+            string win = Environment.GetEnvironmentVariable("WINDIR") ?? @"C:\Windows";
+            string csc = Path.Combine(win, @"Microsoft.NET\Framework64\v4.0.30319\csc.exe");
+            if (!File.Exists(csc)) csc = Path.Combine(win, @"Microsoft.NET\Framework\v4.0.30319\csc.exe");
+            string outExe = Path.Combine(TempRoot, "StudyTracker.exe");
+            string args = "/nologo /target:winexe /out:\"" + outExe + "\" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll \"" + cs + "\"";
+            string log = "";
+            try
+            {
+                var psi = new ProcessStartInfo(csc, args) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, WorkingDirectory = Path.GetDirectoryName(cs) };
+                using (var p = Process.Start(psi)) { log = p.StandardOutput.ReadToEnd(); p.WaitForExit(); }
+            }
+            catch (Exception e) { log = e.Message; }
+            if (File.Exists(outExe)) return outExe;
+            if (ready == null) throw new Exception("The new version could not be built.\n" + log);
+        }
+        return ready;
+    }
+    // swaps the exe after this app closes, restarts it and deletes the temp files
+    public static bool Apply(string newExe)
+    {
+        string target = Application.ExecutablePath, dir = App.ExeDir;
+        var l = new List<string> {
+            "ping 127.0.0.1 -n 4 >nul",
+            "copy /y \"" + newExe + "\" \"" + target + "\" >nul 2>&1",
+            "if errorlevel 1 (ping 127.0.0.1 -n 6 >nul & copy /y \"" + newExe + "\" \"" + target + "\" >nul 2>&1)",
+            "explorer.exe \"" + target + "\"",
+            "ping 127.0.0.1 -n 3 >nul",
+            "rmdir /s /q \"" + TempRoot + "\"" };
+        return Installer.RunBat(l, !Installer.CanWrite(dir), false);
     }
 }
 
@@ -302,7 +386,9 @@ class MainForm : Form
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
     string dataFile, root = "", userName = ""; int goal = 60, cur = 0; bool loading = true, muted = false;
     List<StudyTask> tasks = new List<StudyTask>(); List<Sess> sessions = new List<Sess>(); List<string[]> index = new List<string[]>();
-    Panel banner, content; Panel[] pages = new Panel[4]; Button[] nav = new Button[4]; PictureBox pic; Button bDark, bPal;
+    Panel banner, content; Panel[] pages = new Panel[5]; Button[] nav = new Button[5]; PictureBox pic; Button bDark, bPal;
+    bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
+    Timer dotTimer, weekTimer; Label lblVer, lblUpdInfo, lblUpdStatus; Button bCheck, bInstall; ProgressBar prog; RadioButton rbAuto, rbManual;
     TextBox txtTitle; NumericUpDown numTarget; ListView lvTasks; Label lblStatus, lblHello, lblQuote, lblInst; Button btnRead; MiniTimer mini; StudyTask miniTask;
     Label lblSummary; ProgressBar bar; Panel chart; ListBox lbSubjects; NumericUpDown numGoal; Label lblRoot; TextBox txtSearch; ListView lvFiles;
     string[] quotes = { "Small steps every day add up.", "Read ahead, stay ahead.", "Future doctor in the making!", "Consistency beats cramming.", "One more page. You've got this!",
@@ -317,14 +403,14 @@ class MainForm : Form
         dataFile = Path.Combine(App.DataDir, "study_data.txt"); bool dark = false; int pal = 0; Load_(ref dark, ref pal); Theme.Apply(dark, pal);
         try { Icon = Icon.FromHandle(Theme.Logo(64).GetHicon()); } catch { }
         content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(16) }; Controls.Add(content);
-        for (int i = 0; i < 4; i++) { pages[i] = new Panel { Dock = DockStyle.Fill }; content.Controls.Add(pages[i]); }
-        var navBar = new Panel { Dock = DockStyle.Top, Height = 48 }; string[] names = { "Study Plan", "Stats", "Find Files", "About" };
-        for (int i = 0; i < 4; i++) { int k = i; nav[i] = Theme.Btn(names[i], 16 + i * 136, 8, 128, "nav"); nav[i].Height = 34; nav[i].Click += delegate { ShowPage(k); }; navBar.Controls.Add(nav[i]); }
-        Controls.Add(navBar);
+        for (int i = 0; i < 5; i++) { pages[i] = new Panel { Dock = DockStyle.Fill }; content.Controls.Add(pages[i]); }
+        var navBar = new Panel { Dock = DockStyle.Top, Height = 48 }; string[] names = { "Study Plan", "Stats", "Find Files", "Updates", "About" };
+        for (int i = 0; i < 5; i++) { int k = i; nav[i] = Theme.Btn(names[i], 16 + i * 136, 8, 128, "nav"); nav[i].Height = 34; nav[i].Click += delegate { ShowPage(k); }; navBar.Controls.Add(nav[i]); }
+        nav[3].Paint += NavDot; Controls.Add(navBar);
         Controls.Add(new Panel { Dock = DockStyle.Top, Height = 4, Tag = "line" });
-        BuildBanner(); BuildPlan(pages[0]); BuildStats(pages[1]); BuildFiles(pages[2]); BuildAbout(pages[3]);
-        loading = false; Recolor(); RefreshTasks(); RefreshStats(); Scan(); Greet(); ShowPage(0);
-        Shown += delegate { if (userName == "") { var n = Prompt("Welcome!", "Hi! What's your name?", ""); userName = string.IsNullOrWhiteSpace(n) ? "Student" : n.Trim(); Save(); Greet(); } };
+        BuildBanner(); BuildPlan(pages[0]); BuildStats(pages[1]); BuildFiles(pages[2]); BuildUpdates(pages[3]); BuildAbout(pages[4]);
+        if (stamp == DateTime.MinValue) stamp = DateTime.UtcNow; loading = false; Recolor(); RefreshTasks(); RefreshStats(); Scan(); Greet(); ShowPage(0); StartTimers();
+        Shown += delegate { if (userName == "") { var n = Prompt("Welcome!", "Hi! What's your name?", ""); userName = string.IsNullOrWhiteSpace(n) ? "Student" : n.Trim(); Save(); Greet(); } AutoCheck(); };
     }
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); DarkBar(); }
     void DarkBar() { try { int v = Theme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref v, 4); DwmSetWindowAttribute(Handle, 19, ref v, 4); } catch { } }
@@ -333,12 +419,12 @@ class MainForm : Form
     {
         BackColor = Theme.Bg; Theme.Skin(this); pic.Image = Theme.Logo(54);
         bDark.Text = Theme.Dark ? "Light mode" : "Dark mode"; bPal.Text = "Colors: " + Theme.PalNames[Theme.Pal];
-        banner.Invalidate(); if (chart != null) chart.Invalidate(); RefreshTasks(); ShowPage(cur); DarkBar(); Save();
+        banner.Invalidate(); if (chart != null) chart.Invalidate(); RefreshTasks(); UpdateUI(); ShowPage(cur); DarkBar(); Save();
     }
     void ShowPage(int i)
     {
         cur = i;
-        for (int j = 0; j < 4; j++) { pages[j].Visible = j == i; nav[j].BackColor = j == i ? Theme.Accent : Theme.Card; nav[j].ForeColor = j == i ? Color.White : Theme.Text; }
+        for (int j = 0; j < 5; j++) { pages[j].Visible = j == i; nav[j].BackColor = j == i ? Theme.Accent : Theme.Card; nav[j].ForeColor = j == i ? Color.White : Theme.Text; }
         if (i == 1) RefreshStats(); if (i == 2) txtSearch.Focus();
     }
 
@@ -372,13 +458,17 @@ class MainForm : Form
         if (!File.Exists(dataFile)) return;
         foreach (var line in File.ReadAllLines(dataFile))
         {
-            var p = line.Split('\t'); int a, b;
+            var p = line.Split('\t'); int a, b; long tk;
             if (p[0] == "R" && p.Length > 1) root = p[1];
             else if (p[0] == "N" && p.Length > 1) userName = p[1];
             else if (p[0] == "M" && p.Length > 1) muted = p[1] == "1";
             else if (p[0] == "D" && p.Length > 1) dark = p[1] == "1";
             else if (p[0] == "A" && p.Length > 1 && int.TryParse(p[1], out a)) pal = a;
             else if (p[0] == "G" && p.Length > 1 && int.TryParse(p[1], out a)) goal = a;
+            else if (p[0] == "U" && p.Length > 1 && long.TryParse(p[1], out tk) && tk >= 0) stamp = new DateTime(tk, DateTimeKind.Utc);
+            else if (p[0] == "K" && p.Length > 1 && long.TryParse(p[1], out tk) && tk >= 0) lastCheck = new DateTime(tk, DateTimeKind.Utc);
+            else if (p[0] == "L" && p.Length > 1 && long.TryParse(p[1], out tk) && tk >= 0) latest = new DateTime(tk, DateTimeKind.Utc);
+            else if (p[0] == "Z" && p.Length > 1) autoMode = p[1] == "1";
             else if (p[0] == "T" && p.Length > 3 && int.TryParse(p[2], out a)) tasks.Add(new StudyTask { Title = p[1], Target = a, Done = p[3] == "1" });
             else if (p[0] == "S" && p.Length > 4 && int.TryParse(p[3], out a) && int.TryParse(p[4], out b)) sessions.Add(new Sess { Date = p[1], Subject = p[2], Minutes = a, Pages = b });
         }
@@ -386,7 +476,7 @@ class MainForm : Form
     void Save()
     {
         if (loading) return;
-        var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal };
+        var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal, "U\t" + stamp.Ticks, "K\t" + lastCheck.Ticks, "L\t" + latest.Ticks, "Z\t" + (autoMode ? "1" : "0") };
         foreach (var t in tasks) l.Add("T\t" + Clean(t.Title) + "\t" + t.Target + "\t" + (t.Done ? "1" : "0"));
         foreach (var s in sessions) l.Add("S\t" + s.Date + "\t" + Clean(s.Subject) + "\t" + s.Minutes + "\t" + s.Pages);
         try { Directory.CreateDirectory(App.DataDir); File.WriteAllLines(dataFile, l.ToArray()); } catch (Exception e) { MessageBox.Show("Could not save: " + e.Message); }
@@ -560,7 +650,7 @@ class MainForm : Form
         var pb2 = new PictureBox { Left = 10, Top = 10, Width = 130, Height = 130, Image = Theme.Logo(130), BackColor = Color.Transparent };
         var title = new Label { Left = 160, Top = 12, Width = 600, Height = 46, Text = "Study Tracker", Font = new Font("Segoe UI", 26, FontStyle.Bold), Tag = "title" };
         var by = new Label { Left = 163, Top = 62, Width = 600, Height = 30, Text = "Created by 3Mkay Derado", Font = new Font("Segoe UI", 14, FontStyle.Bold), Tag = "sub" };
-        var desc = new Label { Left = 163, Top = 98, Width = 640, Height = 50, Text = "A free, offline study companion: plan what to read, track your time with a pop-up timer, see your streaks, and find any note or book in seconds. Version 3.0" };
+        var desc = new Label { Left = 163, Top = 98, Width = 640, Height = 50, Text = "A free, offline study companion: plan what to read, track your time with a pop-up timer, see your streaks, and find any note or book in seconds. Version " + Updater.Version };
         var med = new Label { Left = 10, Top = 170, Width = 780, Height = 26, Text = "Need medical lecture notes? Visit MedEduNotes:", Font = new Font("Segoe UI", 11, FontStyle.Bold) };
         var link = new LinkLabel { Left = 10, Top = 198, Width = 600, Height = 26, Text = "https://med-edu-notes.vercel.app/", Font = new Font("Segoe UI", 11) };
         link.LinkClicked += delegate { try { Process.Start(new ProcessStartInfo("https://med-edu-notes.vercel.app/") { UseShellExecute = true }); } catch { } };
@@ -569,6 +659,93 @@ class MainForm : Form
         var bun = Theme.Btn("Uninstall Study Tracker", 10, 330, 220, "b"); bun.Height = 36;
         bun.Click += delegate { if (Installer.Uninstall(this)) { loading = true; Environment.Exit(0); } };
         p.Controls.AddRange(new Control[] { pb2, title, by, desc, med, link, tip, lblInst, bun });
+    }
+
+    // ---------- updates ----------
+    static string Fmt(DateTime d) { return d == DateTime.MinValue ? "never" : d.ToLocalTime().ToString("dd MMM yyyy, HH:mm", CultureInfo.CurrentCulture); }
+    void Ui(Action a) { try { if (!IsDisposed && IsHandleCreated) BeginInvoke(a); } catch { } }
+    void BuildUpdates(Control p)
+    {
+        var title = new Label { Left = 10, Top = 6, Width = 600, Height = 44, Text = "Updates", Font = new Font("Segoe UI", 22, FontStyle.Bold), Tag = "title" };
+        lblVer = new Label { Left = 10, Top = 54, Width = 700, Height = 28, Font = new Font("Segoe UI", 13, FontStyle.Bold) };
+        lblUpdInfo = new Label { Left = 10, Top = 88, Width = 800, Height = 66, Tag = "muted" };
+        lblUpdStatus = new Label { Left = 10, Top = 160, Width = 820, Height = 30, Font = new Font("Segoe UI", 12, FontStyle.Bold), Tag = "white" };
+        bCheck = Theme.Btn("Check for updates", 10, 200, 190, "a"); bCheck.Height = 38;
+        bInstall = Theme.Btn("Install update now", 210, 200, 190, "c"); bInstall.Height = 38; bInstall.Visible = false;
+        prog = new ProgressBar { Left = 410, Top = 212, Width = 300, Height = 14, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
+        rbAuto = new RadioButton { Left = 10, Top = 260, Width = 820, Height = 26, Text = "Automatic: check about once a week and install updates for me", Checked = autoMode };
+        rbManual = new RadioButton { Left = 10, Top = 290, Width = 820, Height = 26, Text = "Manual: just show an orange dot when an update is available", Checked = !autoMode };
+        var note = new Label { Left = 10, Top = 332, Width = 820, Height = 60, Tag = "muted", Text = "Updates come from github.com/kjnrmbiriri01/Study-Tracker. The app compares the repository's last change with your installed date, downloads the files to a temporary folder, installs the new version, restarts, and deletes the temporary files. Your data is never touched." };
+        p.Controls.AddRange(new Control[] { title, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
+        bCheck.Click += delegate { CheckNow(true); };
+        bInstall.Click += delegate { InstallUpdate(false); };
+        rbAuto.CheckedChanged += delegate { autoMode = rbAuto.Checked; Save(); };
+    }
+    void UpdateUI()
+    {
+        if (lblVer == null) return;
+        updateAvailable = latest != DateTime.MinValue && latest > stamp;
+        lblVer.Text = "Study Tracker  v" + Updater.Version;
+        lblUpdInfo.Text = "Installed / last updated:  " + Fmt(stamp) + "\nLast checked:  " + Fmt(lastCheck) + "\nLatest change on GitHub:  " + (latest == DateTime.MinValue ? "unknown" : Fmt(latest));
+        if (updateAvailable) { lblUpdStatus.Text = "An update is available!"; lblUpdStatus.ForeColor = ColorTranslator.FromHtml("#E08A00"); }
+        else { lblUpdStatus.Text = latest == DateTime.MinValue ? "Not checked yet. Press \"Check for updates\"." : "You're up to date."; lblUpdStatus.ForeColor = Theme.Accent; }
+        bInstall.Visible = updateAvailable; Text = updateAvailable ? "Study Tracker  -  update available" : "Study Tracker";
+        if (nav[3] != null) nav[3].Invalidate();
+    }
+    void NavDot(object s, PaintEventArgs e)
+    {
+        if (!updateAvailable) return;
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; int x = nav[3].Width - 22;
+        using (var br = new SolidBrush(ColorTranslator.FromHtml(blink ? "#FFD21F" : "#FF8A00"))) g.FillEllipse(br, x, 7, 13, 13);
+        using (var pen = new Pen(Color.White, 1.5f)) g.DrawEllipse(pen, x, 7, 13, 13);
+    }
+    void StartTimers()
+    {
+        dotTimer = new Timer { Interval = 500 }; dotTimer.Tick += delegate { blink = !blink; if (updateAvailable) nav[3].Invalidate(); }; dotTimer.Start();
+        weekTimer = new Timer { Interval = 3600000 }; weekTimer.Tick += delegate { AutoCheck(); }; weekTimer.Start();
+    }
+    void AutoCheck() { if (!busy && (lastCheck == DateTime.MinValue || (DateTime.UtcNow - lastCheck).TotalDays >= 7)) CheckNow(false); }
+    void SetBusy(bool on, string msg)
+    {
+        prog.Visible = on; bCheck.Enabled = !on; bInstall.Enabled = !on; if (msg != null) lblUpdStatus.Text = msg;
+    }
+    void CheckNow(bool manual)
+    {
+        if (busy) return; busy = true; SetBusy(true, "Checking GitHub...");
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        {
+            DateTime d; string err; bool ok = Updater.GetLatest(out d, out err);
+            Ui(delegate
+            {
+                busy = false; SetBusy(false, null);
+                if (ok) { latest = d; lastCheck = DateTime.UtcNow; Save(); UpdateUI(); if (updateAvailable && autoMode && !manual) InstallUpdate(true); }
+                else { UpdateUI(); if (manual) lblUpdStatus.Text = "Could not check for updates: " + err; }
+            });
+        });
+    }
+    void InstallUpdate(bool silent)
+    {
+        if (busy) return;
+        if (mini != null && !mini.IsDisposed) { if (!silent) MessageBox.Show("Finish your reading timer first, then install the update."); return; }
+        if (!silent && MessageBox.Show("Download and install the update now? Study Tracker will restart. Your data is kept.", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        busy = true; SetBusy(true, "Starting update..."); if (silent) lblQuote.Text = "Updating to the latest version...";
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        {
+            try
+            {
+                string exe = Updater.Prepare(delegate(string m) { Ui(delegate { lblUpdStatus.Text = m; }); });
+                Ui(delegate
+                {
+                    if (Updater.Apply(exe)) { stamp = latest; Save(); Environment.Exit(0); }
+                    else { Updater.Cleanup(); busy = false; SetBusy(false, "Update cancelled. Nothing was changed."); Greet(); }
+                });
+            }
+            catch (Exception ex)
+            {
+                Updater.Cleanup(); string msg = ex.Message;
+                Ui(delegate { busy = false; SetBusy(false, "Update failed: " + msg); Greet(); });
+            }
+        });
     }
 
     string Prompt(string title, string label, string def)
