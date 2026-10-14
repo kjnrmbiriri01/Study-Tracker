@@ -34,6 +34,34 @@ static class Theme
     public static Color Base = ColorTranslator.FromHtml("#0c1f22");
     public static Color Bg, Card, Text, Muted, Accent, Accent2, Accent3, Border;
     public static string[] PalNames = { "Ocean", "Rose", "Lavender", "Sunny" };
+    // user font preferences: baked-in sizes are the "Small" baseline; these apply family/scale on top
+    public static string Family = "Segoe UI"; public static float FontScale = 1f;
+    static Dictionary<string, Font> fcache = new Dictionary<string, Font>();
+    public static Font F(float size, FontStyle st)   // for custom-painted text
+    {
+        string k = Family + "|" + (size * FontScale) + "|" + (int)st; Font f;
+        if (!fcache.TryGetValue(k, out f)) { f = new Font(Family, Math.Max(7f, size * FontScale), st); fcache[k] = f; }
+        return f;
+    }
+    public static Font F(float size) { return F(size, FontStyle.Regular); }
+    static void Collect(Control c, List<Control> all, bool self) { if (self) all.Add(c); foreach (Control k in c.Controls) Collect(k, all, true); }
+    public static void ScaleFonts(Control root, float ratio, bool includeRoot)   // snapshot first, so nested controls are never scaled twice
+    {
+        var all = new List<Control>(); Collect(root, all, includeRoot); var old = all.Select(c => c.Font).ToList();
+        for (int i = 0; i < all.Count; i++) { try { all[i].Font = new Font(old[i].FontFamily, Math.Max(7f, Math.Min(26f, old[i].Size * ratio)), old[i].Style); } catch { } }
+    }
+    public static void ScaleFonts(Control root, float ratio) { ScaleFonts(root, ratio, true); }
+    public static void SetFamily(Control root, string fam, bool includeRoot)
+    {
+        var all = new List<Control>(); Collect(root, all, includeRoot); var old = all.Select(c => c.Font).ToList();
+        for (int i = 0; i < all.Count; i++) { try { all[i].Font = new Font(fam, old[i].Size, old[i].Style); } catch { } }
+    }
+    public static void SetFamily(Control root, string fam) { SetFamily(root, fam, true); }
+    public static void ApplyUserFont(Control root, bool includeRoot)   // for controls created after start-up
+    {
+        if (Family != "Segoe UI") SetFamily(root, Family, includeRoot);
+        if (Math.Abs(FontScale - 1f) > 0.01f) ScaleFonts(root, FontScale, includeRoot);
+    }
     static string[][] pals = {
         new string[] { "#1FB5A6", "#FF7B8A", "#FFC15E" },
         new string[] { "#E8588D", "#8A6CF0", "#FFB86B" },
@@ -50,7 +78,7 @@ static class Theme
     }
     public static Button Btn(string text, int x, int y, int w, string role)
     {
-        var b = new Button { Text = text, Left = x, Top = y, Width = w, Height = 32, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand, Tag = role, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
+        var b = new Button { Text = text, Left = x, Top = y, Width = w, Height = 32, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand, Tag = role, Font = new Font("Segoe UI", 8.5f, FontStyle.Bold) };
         b.FlatAppearance.BorderSize = 0; return b;
     }
     public static GraphicsPath Round(Rectangle r, int d)
@@ -244,7 +272,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "5.3";
+    public const string Version = "5.4";
     const string Owner = "kjnrmbiriri01", Repo = "Study-Tracker";
     public static string TempRoot { get { return Path.Combine(Path.GetTempPath(), "StudyTrackerUpdate"); } }
     static WebClient Client()
@@ -325,14 +353,14 @@ class SetupForm : Form
     public SetupForm()
     {
         Text = "Study Tracker Setup"; ClientSize = new Size(600, 400); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen; Font = new Font("Segoe UI", 10); BackColor = Theme.Bg;
+        StartPosition = FormStartPosition.CenterScreen; Font = new Font("Segoe UI", 9); BackColor = Theme.Bg;
         var ban = new Panel { Dock = DockStyle.Top, Height = 90, Tag = "banner" };
         ban.Paint += (s, e) => { using (var gb = new LinearGradientBrush(ban.ClientRectangle, Theme.Base, Theme.Accent, 0f)) e.Graphics.FillRectangle(gb, ban.ClientRectangle); };
         var pic = new PictureBox { Left = 18, Top = 15, Width = 60, Height = 60, Image = Theme.Logo(60), BackColor = Color.Transparent };
-        var h = new Label { Left = 92, Top = 16, Width = 480, Height = 34, Text = "Welcome to Study Tracker", Font = new Font("Segoe UI", 18, FontStyle.Bold), Tag = "white", ForeColor = Color.White };
+        var h = new Label { Left = 92, Top = 16, Width = 480, Height = 34, Text = "Welcome to Study Tracker", Font = new Font("Segoe UI", 15, FontStyle.Bold), Tag = "white", ForeColor = Color.White };
         var h2 = new Label { Left = 94, Top = 54, Width = 480, Height = 24, Text = "Created by 3Mkay Derado", Tag = "white", ForeColor = Color.FromArgb(210, 245, 240) };
         ban.Controls.AddRange(new Control[] { pic, h, h2 });
-        var l1 = new Label { Left = 24, Top = 110, Width = 550, Height = 24, Text = "Where should Study Tracker be installed?", Font = new Font("Segoe UI", 11, FontStyle.Bold) };
+        var l1 = new Label { Left = 24, Top = 110, Width = 550, Height = 24, Text = "Where should Study Tracker be installed?", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
         var tb = new TextBox { Left = 24, Top = 140, Width = 440, Text = Installer.DefaultDir() };
         var br2 = Theme.Btn("Browse...", 474, 137, 100, "c");
         var cd = new CheckBox { Left = 24, Top = 192, Width = 400, Text = "Create a desktop shortcut", Checked = true };
@@ -361,18 +389,18 @@ class MiniTimer : Form
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int m, int w, int l);
     public event Action<int, bool> Finished;
     int total, left, elapsed; bool paused, ended; public bool Muted;
-    Label lbl, title; Panel clock; Button bPause, bPin, bMute, bStop;
+    Label lbl, title; Panel clock; Button bPause, bPin, bMute, bStop, bClose; PictureBox badge;
     Timer t = new Timer { Interval = 1000 };
     public MiniTimer(string task, int minutes, bool muted)
     {
         Muted = muted; total = left = Math.Max(1, minutes) * 60;
-        FormBorderStyle = FormBorderStyle.Sizable; ShowInTaskbar = false; TopMost = true; Text = "Timer";
+        FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true; Text = "Timer";   // no Windows title bar: the header below is part of the timer
         ClientSize = new Size(350, 205); MinimumSize = new Size(300, 195);
         try { Icon = Icon.FromHandle(Theme.Logo(32).GetHicon()); } catch { }
         BackColor = Color.FromArgb(15, 20, 29); Font = new Font("Segoe UI", 9);
         var wa = Screen.PrimaryScreen.WorkingArea; StartPosition = FormStartPosition.Manual; Location = new Point(wa.Right - Width - 14, wa.Top + 90);
         Shown += delegate { try { int darkCaption = 1; DwmSetWindowAttribute(Handle, 20, ref darkCaption, 4); DwmSetWindowAttribute(Handle, 19, ref darkCaption, 4); } catch { } };
-        title = new Label { Text = "Timer", ForeColor = Color.White, Font = new Font("Segoe UI", 13, FontStyle.Bold) };
+        title = new Label { Text = string.IsNullOrEmpty(task) ? "Timer" : task, ForeColor = Color.White, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold) };
         clock = new Panel { BackColor = BackColor }; clock.Paint += DrawClock;
         lbl = new Label { TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White, Font = new Font("Segoe UI", 16, FontStyle.Bold), BackColor = Color.Transparent };
         clock.Controls.Add(lbl);
@@ -380,14 +408,18 @@ class MiniTimer : Form
         bStop = Mk("Finish", 0, 0, 0, 0, Color.FromArgb(36, 46, 62));
         bPin = Mk("Pin", 0, 0, 0, 0, Color.FromArgb(36, 46, 62));
         bMute = Mk(Muted ? "Muted" : "Sound", 0, 0, 0, 0, Color.FromArgb(36, 46, 62));
-        Controls.AddRange(new Control[] { title, clock, bPause, bStop, bPin, bMute });
-        Resize += delegate { LayoutTimer(); }; LayoutTimer();
-        MouseDown += Drag; title.MouseDown += Drag; clock.MouseDown += Drag; lbl.MouseDown += Drag;
+        badge = new PictureBox { Image = Theme.Logo(18), SizeMode = PictureBoxSizeMode.Zoom, BackColor = BackColor };
+        bClose = Mk("X", 0, 0, 0, 0, BackColor); bClose.ForeColor = Color.FromArgb(170, 182, 200);
+        bClose.FlatAppearance.MouseOverBackColor = Color.FromArgb(196, 52, 52); bClose.FlatAppearance.MouseDownBackColor = Color.FromArgb(160, 40, 40);
+        bClose.Click += delegate { Done(false); };
+        Controls.AddRange(new Control[] { title, badge, bClose, clock, bPause, bStop, bPin, bMute });
+        Resize += delegate { LayoutTimer(); Region = new Region(Theme.Round(new Rectangle(0, 0, Width, Height), 18)); }; LayoutTimer(); Region = new Region(Theme.Round(new Rectangle(0, 0, Width, Height), 18));
+        MouseDown += Drag; badge.MouseDown += Drag; title.MouseDown += Drag; clock.MouseDown += Drag; lbl.MouseDown += Drag;
         Show2();
         t.Tick += delegate { if (paused || ended) return; left--; elapsed++; Show2(); if (left <= 0) Done(true); };
         t.Start();
         bPause.Click += delegate { paused = !paused; bPause.Text = paused ? "▶  Start" : "Ⅱ  Pause"; };
-        bPin.Click += delegate { TopMost = !TopMost; bPin.Text = TopMost ? "Pinned" : "Pin"; bPin.BackColor = TopMost ? Color.FromArgb(87, 57, 174) : Color.FromArgb(36, 46, 62); };
+        bPin.Click += delegate { TopMost = !TopMost; bPin.Text = TopMost ? "Pinned" : "Pin"; bPin.BackColor = TopMost ? Theme.Accent : Color.FromArgb(36, 46, 62); };
         bMute.Click += delegate { Muted = !Muted; bMute.Text = Muted ? "Muted" : "Sound"; };
         bStop.Click += delegate { Done(false); };
         FormClosing += delegate { if (!ended) { ended = true; t.Stop(); if (Finished != null) Finished((int)Math.Round(elapsed / 60.0), false); } };
@@ -395,7 +427,7 @@ class MiniTimer : Form
     void LayoutTimer()
     {
         int w = ClientSize.Width, h = ClientSize.Height;
-        title.SetBounds(14, 5, w - 28, 24);
+        badge.SetBounds(12, 6, 18, 18); title.SetBounds(36, 4, w - 36 - 44, 22); bClose.SetBounds(w - 40, 0, 40, 28);
         int d = Math.Max(72, Math.Min(88, w - 24));
         clock.SetBounds((w - d) / 2, 29, d, d); lbl.SetBounds(0, 0, d, d);
         int y = clock.Bottom + 2, gap = 5, bottom = h - y - 8;
@@ -413,6 +445,22 @@ class MiniTimer : Form
         using (var p = new Pen(Color.FromArgb(35, 44, 60), 7)) g.DrawArc(p, r, 0, 360);
         float pct = total > 0 ? Math.Max(0, Math.Min(1, elapsed / (float)total)) : 0;
         using (var p = new Pen(Color.FromArgb(255, 100, 35), 7) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, r, -90, 360 * pct);
+    }
+    protected override void WndProc(ref Message m)   // borderless window: keep edge/corner resizing
+    {
+        if (m.Msg == 0x84)   // WM_NCHITTEST
+        {
+            base.WndProc(ref m);
+            if ((int)m.Result == 1)   // HTCLIENT
+            {
+                int lp = unchecked((int)(long)m.LParam); var p = PointToClient(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+                int g = 8; bool l = p.X < g, r = p.X > ClientSize.Width - g, t = p.Y < g, b = p.Y > ClientSize.Height - g;
+                if (l && t) m.Result = (IntPtr)13; else if (r && t) m.Result = (IntPtr)14; else if (l && b) m.Result = (IntPtr)16; else if (r && b) m.Result = (IntPtr)17;
+                else if (l) m.Result = (IntPtr)10; else if (r) m.Result = (IntPtr)11; else if (t) m.Result = (IntPtr)12; else if (b) m.Result = (IntPtr)15;
+            }
+            return;
+        }
+        base.WndProc(ref m);
     }
     void Drag(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } }
     protected override void OnPaint(PaintEventArgs e)
@@ -443,7 +491,7 @@ class Stepper : Card
     {
         Width = 128; Height = 36;
         bm = Theme.Btn("-", 3, 3, 30, "a"); bp = Theme.Btn("+", 95, 3, 30, "a"); bm.Height = bp.Height = 30;
-        lbl = new Label { Top = 7, Height = 22, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold) };
+        lbl = new Label { Top = 7, Height = 22, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
         Controls.AddRange(new Control[] { bm, bp, lbl });
         bm.Click += delegate { Value = val - Step; }; bp.Click += delegate { Value = val + Step; };
         Resize += delegate { Lay(); }; Lay(); Value = val;
@@ -465,10 +513,10 @@ class AskForm : Form
     void Init(string title, string sub, int h)
     {
         FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
-        ClientSize = new Size(440, h); BackColor = Theme.Bg; Font = new Font("Segoe UI", 10); Text = title;
+        ClientSize = new Size(440, h); BackColor = Theme.Bg; Font = new Font("Segoe UI", 9); Text = title;
         var head = new Panel { Dock = DockStyle.Top, Height = 70, Tag = "banner" };
         head.Paint += (s, e) => { using (var gb = new LinearGradientBrush(head.ClientRectangle, Theme.Base, Theme.Accent, 0f)) e.Graphics.FillRectangle(gb, head.ClientRectangle); };
-        head.Controls.Add(new Label { Left = 22, Top = 10, Width = 396, Height = 28, Text = title, Tag = "white", ForeColor = Color.White, Font = new Font("Segoe UI", 15, FontStyle.Bold) });
+        head.Controls.Add(new Label { Left = 22, Top = 10, Width = 396, Height = 28, Text = title, Tag = "white", ForeColor = Color.White, Font = new Font("Segoe UI", 12.5f, FontStyle.Bold) });
         head.Controls.Add(new Label { Left = 24, Top = 40, Width = 396, Height = 22, Text = sub, Tag = "white", ForeColor = Color.FromArgb(215, 245, 240), AutoEllipsis = true });
         Controls.Add(head);
     }
@@ -476,14 +524,14 @@ class AskForm : Form
     {
         var ok = Theme.Btn("Save", 316, h - 56, 100, "a"); ok.Height = 36; ok.DialogResult = DialogResult.OK;
         var no = Theme.Btn("Cancel", 206, h - 56, 100, "c"); no.Height = 36; no.DialogResult = DialogResult.Cancel;
-        Controls.Add(ok); Controls.Add(no); AcceptButton = ok; CancelButton = no; Theme.Skin(this);
+        Controls.Add(ok); Controls.Add(no); AcceptButton = ok; CancelButton = no; Theme.Skin(this); Theme.ApplyUserFont(this, true);
     }
     public AskForm(string title, string label, string def)   // text answer
     {
         Init(title, "", 236);
         Controls.Add(new Label { Left = 24, Top = 86, Width = 392, Height = 22, Text = label, Tag = "muted" });
         var card = new Card { Left = 24, Top = 112, Width = 392, Height = 48 };
-        tb = new TextBox { Left = 14, Top = 11, Width = 364, Text = def, Tag = "flat", Font = new Font("Segoe UI", 13) };
+        tb = new TextBox { Left = 14, Top = 11, Width = 364, Text = def, Tag = "flat", Font = new Font("Segoe UI", 11.5f) };
         card.Controls.Add(tb); Controls.Add(card); Buttons(236);
         Shown += delegate { tb.Focus(); tb.SelectAll(); };
     }
@@ -503,11 +551,31 @@ class AskForm : Form
     }
 }
 
+// ===== Compact task row for the Home tab =====
+class TaskRow : Card
+{
+    public StudyTask T; public int Studied; public Action<TaskRow> OnToggle;
+    protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); if (new Rectangle(8, 6, 44, 44).Contains(e.Location) && OnToggle != null) OnToggle(this); }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e); var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        var c = new Rectangle(16, 16, 22, 22);
+        if (T.Done) { using (var br = new SolidBrush(Theme.Accent)) g.FillEllipse(br, c); using (var pen = new Pen(Color.White, 2.5f)) g.DrawLines(pen, new Point[] { new Point(21, 27), new Point(26, 32), new Point(33, 22) }); }
+        else using (var pen = new Pen(Theme.Border, 2f)) g.DrawEllipse(pen, c);
+        var fl = TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter; int tw = Math.Max(60, Width - 290);
+        TextRenderer.DrawText(g, T.Title, Theme.F(9.5f, FontStyle.Bold), new Rectangle(52, 7, tw, 22), T.Done ? Theme.Muted : Theme.Text, fl);
+        TextRenderer.DrawText(g, (T.Target > 0 ? Studied + " / " + T.Target : Studied.ToString()) + " min studied", Theme.F(8.5f), new Rectangle(52, 29, tw, 18), Theme.Muted, fl);
+        Color cc = T.Done ? Theme.Accent : Theme.Accent3; var chip = new Rectangle(Width - 192, 15, 84, 26);
+        using (var gp = Theme.Round(chip, 26)) { using (var br = new SolidBrush(Color.FromArgb(50, cc))) g.FillPath(br, gp); using (var pen = new Pen(cc)) g.DrawPath(pen, gp); }
+        TextRenderer.DrawText(g, T.Done ? "Completed" : "To do", Theme.F(8.5f), chip, cc, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+}
+
 // ===== One study task shown as a rounded, bordered card =====
 class TaskCard : Card
 {
-    public StudyTask T; public int Studied; public bool Selected; public Action<TaskCard> OnSelect, OnToggle;
-    static Font fT = new Font("Segoe UI", 11.5f, FontStyle.Bold), fS = new Font("Segoe UI", 9f);
+    public StudyTask T; public int Studied; public bool Selected, Flash; public Action<TaskCard> OnSelect, OnToggle;
+    static Font fT { get { return Theme.F(10f, FontStyle.Bold); } } static Font fS { get { return Theme.F(8.5f); } }
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
@@ -516,6 +584,7 @@ class TaskCard : Card
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        if (Flash) using (var gp = Theme.Round(new Rectangle(1, 1, Width - 3, Height - 3), 16)) using (var br = new SolidBrush(Color.FromArgb(45, Theme.Accent))) g.FillPath(br, gp);
         if (Selected) using (var gp = Theme.Round(new Rectangle(1, 1, Width - 3, Height - 3), 16)) using (var pen = new Pen(Theme.Accent, 2f)) g.DrawPath(pen, gp);
         var c = new Rectangle(18, 18, 24, 24);
         if (T.Done) { using (var br = new SolidBrush(Theme.Accent)) g.FillEllipse(br, c); using (var pen = new Pen(Color.White, 2.5f)) g.DrawLines(pen, new Point[] { new Point(24, 30), new Point(29, 35), new Point(37, 24) }); }
@@ -537,12 +606,12 @@ class MainForm : Form
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, int m, int w, string l);
     const int PAGE_HOME = 0, PAGE_PLAN = 1, PAGE_FOCUS = 2, PAGE_STATS = 3, PAGE_FILES = 4, PAGE_SETTINGS = 5, PAGE_ABOUT = 6, PAGES = 7;
-    string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 10f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false, onboardingDone = false, minimizeDuringTimer = true;
+    string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 9f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false, onboardingDone = false, minimizeDuringTimer = true;
     List<StudyTask> tasks = new List<StudyTask>(); List<Sess> sessions = new List<Sess>(); List<string[]> index = new List<string[]>();
     Panel banner, content; Panel[] pages = new Panel[PAGES]; Button[] nav = new Button[PAGES]; PictureBox pic; Button bDark, bPal;
     bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
     Timer dotTimer, hourTimer; Label lblVer, lblUpdInfo, lblUpdStatus; Button bCheck, bInstall; ProgressBar prog; RadioButton rbAuto, rbManual;
-    TextBox txtTitle; Stepper numTarget; FlowLayoutPanel taskFlow, homeFlow; Label homeSummary; Button[] homeFilters = new Button[3]; StudyTask selTask; Label lblPlanSummary; Label lblDayInfo; ListBox lbDay; DateTime selDay = DateTime.Today; Label lblStatus, lblHello, lblQuote, lblInst; Button btnRead; MiniTimer mini; StudyTask miniTask;
+    TextBox txtTitle; Stepper numTarget; FlowLayoutPanel taskFlow, homeFlow; Card homeSum; Button[] homeFilters = new Button[3]; StudyTask selTask; Label lblPlanSummary; Label lblDayInfo; ListBox lbDay; DateTime selDay = DateTime.Today; Label lblStatus, lblHello, lblQuote, lblInst; Button btnRead; MiniTimer mini; StudyTask miniTask;
     Label lblSummary; ProgressBar bar; Panel chart; ListBox lbSubjects; NumericUpDown numGoal; Label lblRoot; TextBox txtSearch; ListView lvFiles;
     // focus timer (Pomodoro)
     Panel ring; Label lblRingTime, lblRingMode, lblFocusStatus; Button bStart, bReset, bSound; NumericUpDown numFocusMin; ComboBox cbSub; CheckBox chkLog;
@@ -558,7 +627,7 @@ class MainForm : Form
 
     public MainForm()
     {
-        Text = "Study Tracker"; Width = 980; Height = 720; MinimumSize = new Size(880, 640); Font = new Font("Segoe UI", 10); StartPosition = FormStartPosition.CenterScreen;
+        Text = "Study Tracker"; Width = 980; Height = 720; MinimumSize = new Size(880, 640); Font = new Font("Segoe UI", 9); StartPosition = FormStartPosition.CenterScreen;
         dataFile = Path.Combine(App.DataDir, "study_data.txt"); bool dark = true; int pal = 0; Load_(ref dark, ref pal); Theme.Apply(dark, pal);
         viewMonth = DateTime.Today;
         try { Icon = Icon.FromHandle(Theme.Logo(64).GetHicon()); } catch { }
@@ -566,11 +635,11 @@ class MainForm : Form
         for (int i = 0; i < PAGES; i++) { pages[i] = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Bg }; content.Controls.Add(pages[i]); }
         var navBar = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Theme.Bg };
         string[] names = { "Home", "Study Plan", "Focus Timer", "Stats", "Find Files", "Settings", "About" };
-        for (int i = 0; i < PAGES; i++) { int k = i; nav[i] = Theme.Btn(names[i], 8 + i * 126, 8, 122, "nav"); nav[i].Height = 34; nav[i].Click += delegate { ShowPage(k); }; navBar.Controls.Add(nav[i]); }
+        for (int i = 0; i < PAGES; i++) { int k = i; nav[i] = Theme.Btn(names[i], 8 + i * 118, 8, 114, "nav"); nav[i].Height = 34; nav[i].Click += delegate { ShowPage(k); }; navBar.Controls.Add(nav[i]); }
         nav[PAGE_SETTINGS].Paint += NavDot; Controls.Add(navBar);
         Controls.Add(new Panel { Dock = DockStyle.Top, Height = 4, Tag = "line" });
         BuildBanner(); BuildHome(pages[PAGE_HOME]); BuildPlan(pages[PAGE_PLAN]); BuildFocus(pages[PAGE_FOCUS]); BuildStats(pages[PAGE_STATS]); BuildFiles(pages[PAGE_FILES]); BuildSettings(pages[PAGE_SETTINGS]); BuildAbout(pages[PAGE_ABOUT]);
-        if (stamp == DateTime.MinValue) stamp = DateTime.UtcNow; loading = false; Recolor(); RefreshTasks(); RefreshStats(); RefreshStreak(); Scan(); Greet(); ShowPage(0); StartTimers();
+        if (stamp == DateTime.MinValue) stamp = DateTime.UtcNow; ApplyFontPrefs(); loading = false; Recolor(); RefreshTasks(); RefreshStats(); RefreshStreak(); Scan(); Greet(); ShowPage(0); StartTimers();
         Shown += delegate
         {
             if (userName == "") { var n = Prompt("Welcome!", "Hi! What should we call you?", ""); userName = string.IsNullOrWhiteSpace(n) ? "Student" : n.Trim(); Save(); Greet(); }
@@ -620,8 +689,8 @@ class MainForm : Form
         banner = new Panel { Dock = DockStyle.Top, Height = 84, Tag = "banner" };
         banner.Paint += (s, e) => { using (var br = new LinearGradientBrush(banner.ClientRectangle, Theme.Base, Theme.Accent, 0f)) e.Graphics.FillRectangle(br, banner.ClientRectangle); };
         pic = new PictureBox { Left = 16, Top = 14, Width = 54, Height = 54, BackColor = Color.Transparent };
-        lblHello = new Label { Left = 82, Top = 10, Width = 520, Height = 34, ForeColor = Color.White, Tag = "white", Font = new Font("Segoe UI", 17, FontStyle.Bold) };
-        lblQuote = new Label { Left = 84, Top = 48, Width = 520, Height = 24, ForeColor = Color.FromArgb(215, 245, 240), Tag = "white", Font = new Font("Segoe UI", 10, FontStyle.Italic) };
+        lblHello = new Label { Left = 82, Top = 10, Width = 520, Height = 34, ForeColor = Color.White, Tag = "white", Font = new Font("Segoe UI", 14, FontStyle.Bold) };
+        lblQuote = new Label { Left = 84, Top = 48, Width = 520, Height = 24, ForeColor = Color.FromArgb(215, 245, 240), Tag = "white", Font = new Font("Segoe UI", 9, FontStyle.Italic) };
         var bName = Theme.Btn("Edit name", 0, 10, 110, "c"); var b2 = Theme.Btn("Dark mode", 0, 46, 110, "b"); bDark = b2; bPal = Theme.Btn("Colors", 0, 46, 150, "a");
         foreach (var b in new Button[] { bName, bDark, bPal }) { b.Anchor = AnchorStyles.Top | AnchorStyles.Right; b.Height = 28; }
         bName.Left = ClientSize.Width - 130; bDark.Left = ClientSize.Width - 130; bDark.Top = 46; bPal.Left = ClientSize.Width - 290; bPal.Top = 46; bName.Top = 10;
@@ -674,39 +743,55 @@ class MainForm : Form
     }
     int Studied(string title) { return sessions.Where(s => s.Subject == title).Sum(s => s.Minutes); }
 
-    // ---------- home: task overview ----------
+    // ---------- home: all tasks / to do / completed ----------
+    int HomeW() { return Math.Max(320, homeFlow.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 6); }
     void BuildHome(Control p)
     {
-        var title = new Label { Left = 10, Top = 6, Width = 600, Height = 42, Text = "My Tasks", Font = new Font("Segoe UI", 22, FontStyle.Bold), Tag = "title" };
-        homeSummary = new Label { Left = 12, Top = 52, Width = 800, Height = 28, Tag = "muted", Font = new Font("Segoe UI", 10, FontStyle.Bold) };
-        string[] labels = { "All tasks", "To do", "Completed" };
-        for (int i = 0; i < 3; i++) { int k = i; homeFilters[i] = Theme.Btn(labels[i], 12 + i * 132, 88, 124, "c"); homeFilters[i].Click += delegate { homeFilter = k; RefreshHome(); }; p.Controls.Add(homeFilters[i]); }
-        homeFlow = new FlowLayoutPanel { Left = 10, Top = 132, Width = 850, Height = 500, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
-        p.Controls.AddRange(new Control[] { title, homeSummary, homeFlow });
-        p.Resize += delegate { homeFlow.Width = Math.Max(300, p.ClientSize.Width - 20); homeFlow.Height = Math.Max(120, p.ClientSize.Height - 142); RefreshHome(); };
+        homeFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+        homeFlow.Resize += delegate { int w = HomeW(); foreach (Control c in homeFlow.Controls) c.Width = w; };
+        p.Controls.Add(homeFlow);
+        var row = new Panel { Dock = DockStyle.Top, Height = 48 };
+        string[] n = { "All tasks", "To do", "Completed" };
+        for (int i = 0; i < 3; i++) { int k = i; homeFilters[i] = Theme.Btn(n[i], i * 142, 6, 134, "nav"); homeFilters[i].Height = 34; homeFilters[i].Click += delegate { homeFilter = k; RefreshHome(); }; row.Controls.Add(homeFilters[i]); }
+        var add = Theme.Btn("+ New task", 436, 6, 120, "b"); add.Height = 34; add.Click += delegate { ShowPage(PAGE_PLAN); txtTitle.Focus(); };
+        row.Controls.Add(add); p.Controls.Add(row);
+        p.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 10 });
+        homeSum = new Card { Dock = DockStyle.Top, Height = 84 }; homeSum.Paint += DrawHomeSum; p.Controls.Add(homeSum);
+    }
+    void DrawHomeSum(object sender, PaintEventArgs e)
+    {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        int all = tasks.Count, done = tasks.Count(x => x.Done), pct = all == 0 ? 0 : done * 100 / all;
+        TextRenderer.DrawText(g, all == 0 ? "No tasks yet" : done + " of " + all + " tasks completed", Theme.F(11.5f, FontStyle.Bold), new Point(18, 12), Theme.Text);
+        int today = sessions.Where(x => x.Date == Today()).Sum(x => x.Minutes);
+        TextRenderer.DrawText(g, "Studied today: " + today + " min", Theme.F(8.5f), new Rectangle(homeSum.Width - 240, 14, 224, 20), Theme.Muted, TextFormatFlags.Right);
+        var tr = new Rectangle(18, 52, Math.Max(40, homeSum.Width - 36 - 52), 12);
+        using (var gp = Theme.Round(tr, 12)) using (var br = new SolidBrush(Theme.Border)) g.FillPath(br, gp);
+        if (pct > 0) { var fr = new Rectangle(tr.X, tr.Y, Math.Max(12, tr.Width * pct / 100), 12); using (var gp = Theme.Round(fr, 12)) using (var br = new LinearGradientBrush(fr, Theme.Accent, Theme.Accent2, 0f)) g.FillPath(br, gp); }
+        TextRenderer.DrawText(g, pct + "%", Theme.F(8.5f), new Rectangle(tr.Right + 6, 48, 44, 20), Theme.Muted);
     }
     void RefreshHome()
     {
         if (homeFlow == null) return;
-        homeSummary.Text = tasks.Count + " total  •  " + tasks.Count(t => !t.Done) + " to do  •  " + tasks.Count(t => t.Done) + " completed";
-        for (int i = 0; i < 3; i++) { homeFilters[i].BackColor = i == homeFilter ? Theme.Accent : Theme.Card; homeFilters[i].ForeColor = i == homeFilter ? Color.White : Theme.Text; }
-        homeFlow.SuspendLayout(); foreach (Control c in homeFlow.Controls.Cast<Control>().ToList()) { homeFlow.Controls.Remove(c); c.Dispose(); }
-        var list = tasks.Where(t => homeFilter == 0 || (homeFilter == 1 && !t.Done) || (homeFilter == 2 && t.Done)).ToList();
-        if (list.Count == 0) homeFlow.Controls.Add(new Label { Width = Math.Max(280, homeFlow.ClientSize.Width - 30), Height = 80, TextAlign = ContentAlignment.MiddleCenter, Tag = "muted", Text = tasks.Count == 0 ? "No tasks yet. Add your first task in Study Plan." : "No tasks in this section." });
+        int all = tasks.Count, done = tasks.Count(x => x.Done);
+        string[] n = { "All tasks (" + all + ")", "To do (" + (all - done) + ")", "Completed (" + done + ")" };
+        for (int i = 0; i < 3; i++) { homeFilters[i].Text = n[i]; homeFilters[i].BackColor = i == homeFilter ? Theme.Accent : Theme.Card; homeFilters[i].ForeColor = i == homeFilter ? Color.White : Theme.Text; }
+        homeFlow.SuspendLayout();
+        foreach (Control c in homeFlow.Controls.Cast<Control>().ToList()) { homeFlow.Controls.Remove(c); c.Dispose(); }
+        var list = tasks.Where(x => homeFilter == 0 || (homeFilter == 1 && !x.Done) || (homeFilter == 2 && x.Done)).OrderBy(x => x.Done).ToList();
+        if (list.Count == 0) homeFlow.Controls.Add(new Label { Width = HomeW(), Height = 80, Tag = "muted", TextAlign = ContentAlignment.MiddleCenter,
+            Text = tasks.Count == 0 ? "No tasks yet. Press + New task to add your first one." : homeFilter == 1 ? "Nothing left to do. Nice work!" : "Nothing completed yet. Click a task's circle to move it here." });
+        int w = HomeW();
         foreach (var t in list)
         {
-            var card = new Card { Width = Math.Max(280, homeFlow.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 12), Height = 62, Margin = new Padding(0, 0, 0, 8), Tag = "card" };
-            var status = new CheckBox { Left = 12, Top = 18, Width = 22, Height = 24, Checked = t.Done, Text = "", Tag = "flat" };
-            var name = new Label { Left = 42, Top = 8, Width = 420, Height = 24, Text = t.Title, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "title", AutoEllipsis = true };
-            var detail = new Label { Left = 42, Top = 32, Width = 420, Height = 20, Text = (t.Done ? "Completed" : "To do") + "  •  " + Studied(t.Title) + " / " + t.Target + " min studied", Tag = "muted" };
-            var open = Theme.Btn("Open", 0, 14, 74, "a"); open.Height = 32; open.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            card.Controls.AddRange(new Control[] { status, name, detail, open });
-            Action layout = delegate { open.Left = card.ClientSize.Width - 88; name.Width = detail.Width = Math.Max(100, open.Left - 54); }; card.Resize += delegate { layout(); }; layout();
-            status.CheckedChanged += delegate { t.Done = status.Checked; Save(); RefreshTasks(); RefreshHome(); };
-            open.Click += delegate { selTask = t; ShowPage(PAGE_PLAN); RefreshTasks(); };
-            homeFlow.Controls.Add(card);
+            var r = new TaskRow { T = t, Studied = Studied(t.Title), Width = w, Height = 56, Margin = new Padding(0, 0, 0, 8) };
+            var open = Theme.Btn("Open", w - 96, 11, 80, "a"); open.Height = 32; open.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            open.Click += delegate { ShowTask(t); };
+            r.Controls.Add(open);
+            r.OnToggle = k => { k.T.Done = !k.T.Done; Save(); RefreshTasks(); };
+            homeFlow.Controls.Add(r);
         }
-        homeFlow.ResumeLayout(); Theme.Skin(homeFlow);
+        homeFlow.ResumeLayout(); Theme.Skin(homeFlow); Theme.ApplyUserFont(homeFlow, false); if (homeSum != null) homeSum.Invalidate();
     }
 
     // ---------- plan (task cards) ----------
@@ -718,11 +803,11 @@ class MainForm : Form
         p.Controls.Add(taskFlow);
         lblStatus = new Label { Dock = DockStyle.Bottom, Height = 30, Tag = "muted", TextAlign = ContentAlignment.MiddleLeft, Text = "Click a card to select it (click empty space to deselect), or press Start for a pop-up reading timer." };
         p.Controls.Add(lblStatus);
-        lblPlanSummary = new Label { Dock = DockStyle.Top, Height = 34, Tag = "muted", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+        lblPlanSummary = new Label { Dock = DockStyle.Top, Height = 34, Tag = "muted", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
         p.Controls.Add(lblPlanSummary);
         var holder = new Panel { Dock = DockStyle.Top, Height = 68, Padding = new Padding(0, 0, 0, 12) };
         var bar2 = new Card { Dock = DockStyle.Fill };
-        txtTitle = new TextBox { Left = 20, Top = 15, Width = 300, Font = new Font("Segoe UI", 12), Tag = "flat" };
+        txtTitle = new TextBox { Left = 20, Top = 15, Width = 300, Font = new Font("Segoe UI", 10.5f), Tag = "flat" };
         numTarget = new Stepper { Top = 10 };
                 var bAdd = Theme.Btn("Add task", 0, 10, 110, "a"); bAdd.Height = 36;
         bar2.Controls.AddRange(new Control[] { txtTitle, numTarget, bAdd });
@@ -733,6 +818,23 @@ class MainForm : Form
         txtTitle.HandleCreated += delegate { SendMessage(txtTitle.Handle, 0x1501, 1, "What are you studying today?"); };
         bAdd.Click += delegate { AddTask(); };
         txtTitle.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { AddTask(); e.SuppressKeyPress = true; } };
+    }
+    void ShowTask(StudyTask t)
+    {
+        selTask = t; ShowPage(PAGE_PLAN); RefreshTasks();
+        BeginInvoke(new Action(delegate   // after the list has been laid out
+        {
+            foreach (Control o in taskFlow.Controls)
+            {
+                var tc = o as TaskCard; if (tc == null || tc.T != t) continue;
+                int absTop = tc.Top - taskFlow.AutoScrollPosition.Y;                 // card position inside the whole list
+                taskFlow.AutoScrollPosition = new Point(0, Math.Max(0, absTop - 8));  // scroll so it sits at the top
+                tc.Flash = true; tc.Invalidate();
+                var tm = new Timer { Interval = 1500 };
+                tm.Tick += delegate { tm.Stop(); tm.Dispose(); tc.Flash = false; if (!tc.IsDisposed) tc.Invalidate(); };
+                tm.Start(); break;
+            }
+        }));
     }
     void ClearSel()
     {
@@ -791,7 +893,7 @@ class MainForm : Form
         foreach (Control c in taskFlow.Controls.Cast<Control>().ToList()) { taskFlow.Controls.Remove(c); c.Dispose(); }
         if (tasks.Count == 0) { var el = new Label { Width = CardW(), Height = 90, Tag = "muted", TextAlign = ContentAlignment.MiddleCenter, Text = "Nothing planned yet.\nType what you're studying above and press Add task." }; el.MouseDown += delegate { ClearSel(); }; taskFlow.Controls.Add(el); }
         foreach (var t in tasks) taskFlow.Controls.Add(MakeCard(t));
-        taskFlow.ResumeLayout(); Theme.Skin(taskFlow);
+        taskFlow.ResumeLayout(); Theme.Skin(taskFlow); Theme.ApplyUserFont(taskFlow, false);
         lblPlanSummary.Text = tasks.Count + " task(s)   |   " + tasks.Count(x => x.Done) + " done   |   " + sessions.Where(x => x.Date == Today()).Sum(x => x.Minutes) + " min studied today";
         FillCombo(); RefreshHome();
     }
@@ -799,29 +901,33 @@ class MainForm : Form
     // ---------- focus timer (Pomodoro) ----------
     void BuildFocus(Control p)
     {
-        var title = new Label { Left = 10, Top = 6, Width = 400, Height = 44, Text = "Focus Timer", Font = new Font("Segoe UI", 22, FontStyle.Bold), Tag = "title" };
-        var sub = new Label { Left = 12, Top = 52, Width = 500, Height = 24, Tag = "muted", Text = "Pomodoro-style blocks. Deep Focus 25 · Short Break 5 · Long Break 15." };
-        ring = new Card { Left = 30, Top = 90, Width = 280, Height = 280 }; ring.Paint += DrawRing;
-        // clock labels live INSIDE the ring card and are positioned relative to it, centered
-        lblRingMode = new Label { Left = 0, Top = 106, Width = ring.Width, Height = 26, TextAlign = ContentAlignment.MiddleCenter, Tag = "sub", Font = new Font("Segoe UI", 11, FontStyle.Bold), BackColor = Color.Transparent };
-        lblRingTime = new Label { Left = 0, Top = 134, Width = ring.Width, Height = 60, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Theme.Text, Font = new Font("Consolas", 30, FontStyle.Bold), BackColor = Color.Transparent };
+        ring = new Card { Width = 250, Height = 250 }; ring.Paint += DrawRing;
+        lblRingMode = new Label { Left = 0, Top = 78, Width = ring.Width, Height = 22, TextAlign = ContentAlignment.MiddleCenter, Tag = "sub", Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), BackColor = Color.Transparent };
+        lblRingTime = new Label { Left = 0, Top = 104, Width = ring.Width, Height = 50, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Theme.Text, Font = new Font("Consolas", 26, FontStyle.Bold), BackColor = Color.Transparent };
         lblRingMode.Parent = ring; lblRingTime.Parent = ring;
-        var right = new Panel { Left = 340, Top = 90, Width = 580, Height = 300, BackColor = Color.Transparent };
-        bFocus = Theme.Btn("Deep Focus · 25", 0, 0, 180, "a"); bShort = Theme.Btn("Short Break · 5", 188, 0, 180, "c"); bLong = Theme.Btn("Long Break · 15", 376, 0, 180, "b");
-        bFocus.Height = bShort.Height = bLong.Height = 36;
-        var lblCustom = new Label { Left = 0, Top = 52, Width = 160, Text = "Custom minutes:", Tag = "muted" };
-        numFocusMin = new NumericUpDown { Left = 160, Top = 48, Width = 70, Minimum = 1, Maximum = 180, Value = 25, Font = new Font("Segoe UI", 11) };
-        var bSet = Theme.Btn("Set", 238, 46, 70, "c");
-        bStart = Theme.Btn("Start", 0, 92, 180, "a"); bStart.Height = 44; bStart.Font = new Font("Segoe UI", 12, FontStyle.Bold);
-        bReset = Theme.Btn("Reset", 188, 96, 120, "b"); bReset.Height = 40;
-        bSound = Theme.Btn(muted ? "Sound: Off" : "Sound: On", 316, 96, 120, "c"); bSound.Height = 40;
-        bSound.Click += delegate { muted = !muted; bSound.Text = muted ? "Sound: Off" : "Sound: On"; Save(); };
-        chkLog = new CheckBox { Left = 0, Top = 150, Width = 400, Text = "Auto-log completed focus blocks to a subject", Checked = true };
-        var lblSub = new Label { Left = 0, Top = 182, Width = 160, Text = "Log focus time to:", Tag = "muted" };
-        cbSub = new ComboBox { Left = 160, Top = 178, Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10) };
-        lblFocusStatus = new Label { Left = 0, Top = 220, Width = 560, Height = 44, Tag = "muted", Text = "Completed focus blocks: 0" };
-        right.Controls.AddRange(new Control[] { bFocus, bShort, bLong, lblCustom, numFocusMin, bSet, bStart, bReset, bSound, chkLog, lblSub, cbSub, lblFocusStatus });
-        p.Controls.AddRange(new Control[] { title, sub, ring, right });
+        bFocus = Theme.Btn("Deep Focus  25", 0, 6, 150, "a"); bShort = Theme.Btn("Short Break  5", 0, 6, 150, "c"); bLong = Theme.Btn("Long Break  15", 0, 6, 150, "b");
+        bFocus.Height = bShort.Height = bLong.Height = 34;
+        bStart = Theme.Btn("Start", 0, 0, 150, "a"); bStart.Height = 40; bStart.Font = new Font("Segoe UI", 10, FontStyle.Bold);
+        bReset = Theme.Btn("Reset", 0, 0, 100, "b"); bReset.Height = 40;
+        bSound = Theme.Btn(muted ? "Sound: Off" : "Sound: On", 0, 0, 110, "c"); bSound.Height = 40;
+        lblFocusStatus = new Label { Width = 700, Height = 40, TextAlign = ContentAlignment.MiddleCenter, Tag = "muted", Font = new Font("Segoe UI", 9, FontStyle.Italic), Text = "Completed focus blocks: 0" };
+        chkLog = new CheckBox { Width = 220, Text = "Auto-log focus blocks to:", Checked = true };
+        cbSub = new ComboBox { Width = 270, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9) };
+        var lblCustom = new Label { Width = 70, Text = "Custom:", Tag = "muted" };
+        numFocusMin = new NumericUpDown { Width = 64, Minimum = 1, Maximum = 180, Value = 25 };
+        var bSet = Theme.Btn("Set", 0, 0, 56, "c"); bSet.Height = 28;
+        p.Controls.AddRange(new Control[] { bFocus, bShort, bLong, ring, bStart, bReset, bSound, lblFocusStatus, chkLog, cbSub, lblCustom, numFocusMin, bSet });
+        Action lay = delegate
+        {
+            int cx = p.Width / 2;
+            bFocus.Left = cx - 233; bShort.Left = cx - 75; bLong.Left = cx + 83;
+            ring.Left = cx - 125; ring.Top = 54;
+            bStart.SetBounds(cx - 188, 318, 150, 40); bReset.SetBounds(cx - 30, 318, 100, 40); bSound.SetBounds(cx + 78, 318, 110, 40);
+            lblFocusStatus.SetBounds(cx - 350, 366, 700, 40);
+            chkLog.SetBounds(cx - 250, 418, 220, 26); cbSub.SetBounds(cx - 24, 416, 270, 28);
+            lblCustom.SetBounds(cx - 130, 458, 70, 24); numFocusMin.SetBounds(cx - 56, 454, 64, 28); bSet.SetBounds(cx + 16, 454, 56, 28);
+        };
+        p.Resize += delegate { lay(); }; lay();
         bFocus.Click += delegate { SetMode("focus", 25); };
         bShort.Click += delegate { SetMode("short", 5); };
         bLong.Click += delegate { SetMode("long", 15); };
@@ -829,6 +935,7 @@ class MainForm : Form
         numFocusMin.ValueChanged += delegate { if (!frunning && fmode == "focus") SetMode("focus", (int)numFocusMin.Value); };
         bStart.Click += delegate { ToggleRun(); };
         bReset.Click += delegate { frunning = false; fleft = ftotal; bStart.Text = "Start"; UpdateRing(); };
+        bSound.Click += delegate { muted = !muted; bSound.Text = muted ? "Sound: Off" : "Sound: On"; Save(); };
         fTimer = new Timer { Interval = 1000 };
         fTimer.Tick += delegate
         {
@@ -836,7 +943,7 @@ class MainForm : Form
             fleft--; UpdateRing(); if (fleft > 0 && fleft <= 5 && !muted) System.Media.SystemSounds.Beep.Play();
             if (fleft <= 0) FocusDone();
         };
-        fTimer.Start(); // FIX: the timer must actually run; it no-ops while frunning == false
+        fTimer.Start();
         SetMode("focus", 25);
         FillCombo();
     }
@@ -898,14 +1005,14 @@ class MainForm : Form
     {
         var right = new Panel { Dock = DockStyle.Fill }; var left = new Panel { Dock = DockStyle.Left, Width = 420, Padding = new Padding(0, 0, 14, 0) };
         p.Controls.Add(right); p.Controls.Add(left);
-        lbSubjects = new ListBox { Dock = DockStyle.Fill, Font = new Font("Consolas", 10) }; left.Controls.Add(lbSubjects);
+        lbSubjects = new ListBox { Dock = DockStyle.Fill, Font = new Font("Consolas", 9) }; left.Controls.Add(lbSubjects);
         chart = new Card { Dock = DockStyle.Top, Height = 210 }; chart.Paint += DrawChart; left.Controls.Add(chart);
         bar = new ProgressBar { Dock = DockStyle.Top, Height = 22, Maximum = 100 }; left.Controls.Add(bar);
         var g = new Panel { Dock = DockStyle.Top, Height = 40 };
         numGoal = new NumericUpDown { Left = 190, Top = 6, Width = 80, Minimum = 5, Maximum = 1440, Value = Math.Min(1440, Math.Max(5, goal)) };
         numGoal.ValueChanged += delegate { goal = (int)numGoal.Value; Save(); RefreshStats(); RefreshStreak(); };
         g.Controls.AddRange(new Control[] { new Label { Left = 0, Top = 10, Width = 185, Text = "Daily goal (minutes):" }, numGoal }); left.Controls.Add(g);
-        lblSummary = new Label { Dock = DockStyle.Top, Height = 36, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "title", TextAlign = ContentAlignment.MiddleLeft }; left.Controls.Add(lblSummary);
+        lblSummary = new Label { Dock = DockStyle.Top, Height = 36, Font = new Font("Segoe UI", 10, FontStyle.Bold), Tag = "title", TextAlign = ContentAlignment.MiddleLeft }; left.Controls.Add(lblSummary);
         BuildStreak(right);
     }
     Dictionary<string, int> ByDay()
@@ -961,16 +1068,16 @@ class MainForm : Form
         heat = new Card { Dock = DockStyle.Fill }; heat.Paint += DrawHeat; heat.MouseClick += HeatClick; p.Controls.Add(heat);
         p.Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 10 });
         var detail = new Card { Dock = DockStyle.Bottom, Height = 150, Padding = new Padding(16, 10, 16, 10) };
-        lbDay = new ListBox { Dock = DockStyle.Fill, Tag = "flat", Font = new Font("Segoe UI", 10) };
-        lblDayInfo = new Label { Dock = DockStyle.Top, Height = 44, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "title" };
+        lbDay = new ListBox { Dock = DockStyle.Fill, Tag = "flat", Font = new Font("Segoe UI", 9) };
+        lblDayInfo = new Label { Dock = DockStyle.Top, Height = 44, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), Tag = "title" };
         detail.Controls.Add(lbDay); detail.Controls.Add(lblDayInfo); p.Controls.Add(detail);
         p.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 8 });
         var nav2 = new Panel { Dock = DockStyle.Top, Height = 42 };
         bPrev = Theme.Btn("<", 0, 5, 44, "c"); bNext = Theme.Btn(">", 50, 5, 44, "c"); bThisMonth = Theme.Btn("This month", 100, 5, 110, "b");
         nav2.Controls.AddRange(new Control[] { bPrev, bNext, bThisMonth, new Label { Left = 222, Top = 12, Width = 200, Height = 22, Tag = "muted", Text = "Green = daily goal reached" } });
         p.Controls.Add(nav2);
-        lblStreak = new Label { Dock = DockStyle.Top, Height = 26, Font = new Font("Segoe UI", 10, FontStyle.Bold), Tag = "sub" }; p.Controls.Add(lblStreak);
-        p.Controls.Add(new Label { Dock = DockStyle.Top, Height = 32, Text = "Streaks", Font = new Font("Segoe UI", 15, FontStyle.Bold), Tag = "title" });
+        lblStreak = new Label { Dock = DockStyle.Top, Height = 26, Font = new Font("Segoe UI", 9, FontStyle.Bold), Tag = "sub" }; p.Controls.Add(lblStreak);
+        p.Controls.Add(new Label { Dock = DockStyle.Top, Height = 32, Text = "Streaks", Font = new Font("Segoe UI", 12.5f, FontStyle.Bold), Tag = "title" });
         bPrev.Click += delegate { viewMonth = viewMonth.AddMonths(-1); heat.Invalidate(); };
         bNext.Click += delegate { viewMonth = viewMonth.AddMonths(1); heat.Invalidate(); };
         bThisMonth.Click += delegate { viewMonth = DateTime.Today; heat.Invalidate(); };
@@ -1009,7 +1116,7 @@ class MainForm : Form
     void DrawHeat(object sender, PaintEventArgs e)
     {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; var by = ByDay();
-        TextRenderer.DrawText(g, viewMonth.ToString("MMMM yyyy", CultureInfo.CurrentCulture), new Font("Segoe UI", 13, FontStyle.Bold), new Point(16, 12), Theme.Text);
+        TextRenderer.DrawText(g, viewMonth.ToString("MMMM yyyy", CultureInfo.CurrentCulture), new Font("Segoe UI", 11.5f, FontStyle.Bold), new Point(16, 12), Theme.Text);
         string[] wds = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
         int cell, gap, x0, y0; HeatGeom(out cell, out gap, out x0, out y0);
         for (int i = 0; i < 7; i++) TextRenderer.DrawText(g, wds[i], new Font("Segoe UI", 8), new Rectangle(x0 + i * (cell + gap), y0 - 20, cell, 16), Theme.Muted, TextFormatFlags.HorizontalCenter);
@@ -1025,7 +1132,7 @@ class MainForm : Form
             using (var gp = Theme.Round(r, 10)) { using (var b = new SolidBrush(fill)) g.FillPath(b, gp); using (var pen = new Pen(Theme.Border)) g.DrawPath(pen, gp); }
             if (dt == DateTime.Today) using (var pen = new Pen(Theme.Accent2, 2)) using (var gp = Theme.Round(Rectangle.Inflate(r, 1, 1), 11)) g.DrawPath(pen, gp);
             if (dt == selDay.Date) using (var pen = new Pen(Theme.Text, 2)) using (var gp = Theme.Round(Rectangle.Inflate(r, 2, 2), 12)) g.DrawPath(pen, gp);
-            TextRenderer.DrawText(g, day.ToString(), new Font("Segoe UI", 9, FontStyle.Bold), r, v > 0 ? Color.White : Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            TextRenderer.DrawText(g, day.ToString(), new Font("Segoe UI", 8.5f, FontStyle.Bold), r, v > 0 ? Color.White : Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
     }
 
@@ -1034,7 +1141,7 @@ class MainForm : Form
     {
         lvFiles = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false };
         lvFiles.Columns.Add("File", 340); lvFiles.Columns.Add("Folder", 480); p.Controls.Add(lvFiles);
-        txtSearch = new TextBox { Dock = DockStyle.Top, Font = new Font("Segoe UI", 14) }; p.Controls.Add(txtSearch);
+        txtSearch = new TextBox { Dock = DockStyle.Top, Font = new Font("Segoe UI", 11.5f) }; p.Controls.Add(txtSearch);
         var top = new Panel { Dock = DockStyle.Top, Height = 46, BackColor = Color.Transparent };
         var bChoose = Theme.Btn("Choose root folder", 0, 6, 160, "c"); var bScan = Theme.Btn("Rescan", 168, 6, 90, "a");
         lblRoot = new Label { Left = 270, Top = 14, Width = 560, AutoEllipsis = true, Tag = "muted" };
@@ -1077,31 +1184,26 @@ class MainForm : Form
         try { Process.Start(new ProcessStartInfo((string)it.Tag) { UseShellExecute = true }); } catch (Exception ex) { MessageBox.Show(ex.Message); }
     }
 
-    void SetFontFamily(Control parent, string family)
+    void ApplyFontPrefs()
     {
-        foreach (Control c in parent.Controls) { try { c.Font = new Font(family, c.Font.Size, c.Font.Style); } catch { } if (c.Controls.Count > 0) SetFontFamily(c, family); }
-    }
-    void ScaleFonts(Control parent, float ratio)
-    {
-        foreach (Control c in parent.Controls)
-        {
-            try { c.Font = new Font(c.Font.FontFamily, Math.Max(8f, Math.Min(24f, c.Font.Size * ratio)), c.Font.Style); } catch { }
-            if (c.Controls.Count > 0) ScaleFonts(c, ratio);
-        }
+        float r = uiFontSize / 9f;
+        if (uiFontFamily != "Segoe UI") Theme.SetFamily(this, uiFontFamily);
+        if (Math.Abs(r - 1f) > 0.01f) Theme.ScaleFonts(this, r);
+        Theme.Family = uiFontFamily; Theme.FontScale = r;
     }
 
     // ---------- about ----------
     void BuildAbout(Control p)
     {
         var pb2 = new PictureBox { Left = 10, Top = 10, Width = 130, Height = 130, Image = Theme.Logo(130), BackColor = Color.Transparent };
-        var title = new Label { Left = 160, Top = 12, Width = 600, Height = 46, Text = "Study Tracker", Font = new Font("Segoe UI", 26, FontStyle.Bold), Tag = "title" };
-        var by = new Label { Left = 163, Top = 62, Width = 600, Height = 30, Text = "Created by 3Mkay Derado", Font = new Font("Segoe UI", 14, FontStyle.Bold), Tag = "sub" };
+        var title = new Label { Left = 160, Top = 12, Width = 600, Height = 46, Text = "Study Tracker", Font = new Font("Segoe UI", 21.5f, FontStyle.Bold), Tag = "title" };
+        var by = new Label { Left = 163, Top = 62, Width = 600, Height = 30, Text = "Created by 3Mkay Derado", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
         var desc = new Label { Left = 163, Top = 98, Width = 640, Height = 50, Text = "A free, offline study companion: plan what to read, run Pomodoro focus blocks, track your streaks, and find any note or book in seconds. Version " + Updater.Version };
-        var med = new Label { Left = 10, Top = 170, Width = 780, Height = 26, Text = "Need medical lecture notes? Visit MedEduNotes:", Font = new Font("Segoe UI", 11, FontStyle.Bold) };
-        var link = new LinkLabel { Left = 10, Top = 198, Width = 600, Height = 26, Text = "https://med-edu-notes.vercel.app/", Font = new Font("Segoe UI", 11) };
+        var med = new Label { Left = 10, Top = 170, Width = 780, Height = 26, Text = "Need medical lecture notes? Visit MedEduNotes:", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
+        var link = new LinkLabel { Left = 10, Top = 198, Width = 600, Height = 26, Text = "https://med-edu-notes.vercel.app/", Font = new Font("Segoe UI", 9.5f) };
         link.LinkClicked += delegate { try { Process.Start(new ProcessStartInfo("https://med-edu-notes.vercel.app/") { UseShellExecute = true }); } catch { } };
-        var contactTitle = new Label { Left = 10, Top = 240, Width = 800, Height = 26, Tag = "sub", Font = new Font("Segoe UI", 11, FontStyle.Bold), Text = "Contact me" };
-        var contact = new LinkLabel { Left = 10, Top = 268, Width = 600, Height = 26, Text = "kjnrmbiriri1+studytracker@gmail.com", Font = new Font("Segoe UI", 10) };
+        var contactTitle = new Label { Left = 10, Top = 240, Width = 800, Height = 26, Tag = "sub", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), Text = "Contact me" };
+        var contact = new LinkLabel { Left = 10, Top = 268, Width = 600, Height = 26, Text = "kjnrmbiriri1+studytracker@gmail.com", Font = new Font("Segoe UI", 9) };
         contact.LinkClicked += delegate { try { Process.Start(new ProcessStartInfo("mailto:kjnrmbiriri1+studytracker@gmail.com") { UseShellExecute = true }); } catch { MessageBox.Show("Email: kjnrmbiriri1+studytracker@gmail.com", "Contact me"); } };
         var tip = new Label { Left = 10, Top = 302, Width = 800, Height = 44, Tag = "muted", Text = "Tip: put a file named logo.png next to the app to replace the built-in logo. Your data stays on this computer (in your user folder) and never leaves it." };
         lblInst = new Label { Left = 10, Top = 352, Width = 800, Height = 24, Tag = "muted", Text = "Installed at: " + (Installer.RunningInstalled() ? App.ExeDir : "not installed (running portable)") };
@@ -1115,8 +1217,8 @@ class MainForm : Form
     void Ui(Action a) { try { if (!IsDisposed && IsHandleCreated) BeginInvoke(a); } catch { } }
     void BuildSettings(Control p)
     {
-        var title = new Label { Left = 10, Top = 6, Width = 600, Height = 44, Text = "Settings", Font = new Font("Segoe UI", 22, FontStyle.Bold), Tag = "title" };
-        var appearance = new Label { Left = 10, Top = 52, Width = 400, Height = 28, Text = "Appearance & profile", Font = new Font("Segoe UI", 13, FontStyle.Bold), Tag = "sub" };
+        var title = new Label { Left = 10, Top = 6, Width = 600, Height = 44, Text = "Settings", Font = new Font("Segoe UI", 18, FontStyle.Bold), Tag = "title" };
+        var appearance = new Label { Left = 10, Top = 52, Width = 400, Height = 28, Text = "Appearance & profile", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
         var nameLabel = new Label { Left = 10, Top = 88, Width = 90, Height = 28, Text = "Your name", Tag = "muted" };
         var nameBox = new TextBox { Left = 105, Top = 84, Width = 220, Height = 28, Text = userName, Tag = "flat" };
         var saveName = Theme.Btn("Save name", 336, 82, 110, "a"); saveName.Height = 32;
@@ -1127,16 +1229,16 @@ class MainForm : Form
         var colorPick = Theme.Btn("Change accent colour", 270, 122, 180, "c"); colorPick.Height = 32; colorPick.Click += delegate { Theme.Apply(Theme.Dark, Theme.Pal + 1); Recolor(); };
         var familyLabel = new Label { Left = 10, Top = 168, Width = 90, Height = 28, Text = "Font", Tag = "muted" };
         var familyPick = new ComboBox { Left = 105, Top = 164, Width = 150, DropDownStyle = ComboBoxStyle.DropDownList }; familyPick.Items.AddRange(new object[] { "Segoe UI", "Arial", "Calibri", "Consolas" }); familyPick.SelectedItem = uiFontFamily;
-        familyPick.SelectedIndexChanged += delegate { if (familyPick.SelectedItem != null) { uiFontFamily = familyPick.SelectedItem.ToString(); SetFontFamily(this, uiFontFamily); Save(); } };
+        familyPick.SelectedIndexChanged += delegate { if (familyPick.SelectedItem != null) { string fam = familyPick.SelectedItem.ToString(); Theme.SetFamily(this, fam); uiFontFamily = fam; Theme.Family = fam; RefreshTasks(); RefreshStats(); Save(); } };
         var fontLabel = new Label { Left = 10, Top = 208, Width = 90, Height = 28, Text = "Font size", Tag = "muted" };
         var fontPick = new ComboBox { Left = 105, Top = 204, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList }; fontPick.Items.AddRange(new object[] { "Small", "Normal", "Large", "Extra large" }); fontPick.SelectedIndex = uiFontSize < 9.5f ? 0 : uiFontSize < 11f ? 1 : uiFontSize < 13f ? 2 : 3;
-        fontPick.SelectedIndexChanged += delegate { float next = new float[] { 9f, 10f, 12f, 14f }[fontPick.SelectedIndex]; float ratio = next / uiFontSize; ScaleFonts(this, ratio); uiFontSize = next; Save(); };
+        fontPick.SelectedIndexChanged += delegate { float next = new float[] { 9f, 10f, 12f, 14f }[fontPick.SelectedIndex]; Theme.ScaleFonts(this, next / uiFontSize); uiFontSize = next; Theme.FontScale = next / 9f; RefreshTasks(); RefreshStats(); Save(); };
         var minimizeCheck = new CheckBox { Left = 10, Top = 240, Width = 500, Height = 26, Text = "Minimize Study Tracker while the reading timer is running", Checked = minimizeDuringTimer };
         minimizeCheck.CheckedChanged += delegate { minimizeDuringTimer = minimizeCheck.Checked; Save(); };
-        var updatesHead = new Label { Left = 10, Top = 276, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 13, FontStyle.Bold), Tag = "sub" };
-        lblVer = new Label { Left = 10, Top = 54, Width = 700, Height = 28, Font = new Font("Segoe UI", 13, FontStyle.Bold) };
+        var updatesHead = new Label { Left = 10, Top = 276, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
+        lblVer = new Label { Left = 10, Top = 54, Width = 700, Height = 28, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold) };
         lblUpdInfo = new Label { Left = 10, Top = 88, Width = 800, Height = 42, Tag = "muted" };
-        lblUpdStatus = new Label { Left = 10, Top = 136, Width = 820, Height = 30, Font = new Font("Segoe UI", 12, FontStyle.Bold), Tag = "white" };
+        lblUpdStatus = new Label { Left = 10, Top = 136, Width = 820, Height = 30, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "white" };
         bCheck = Theme.Btn("Check for updates", 10, 176, 190, "a"); bCheck.Height = 38;
         bInstall = Theme.Btn("Install update now", 210, 176, 190, "c"); bInstall.Height = 38; bInstall.Visible = false;
         prog = new ProgressBar { Left = 410, Top = 188, Width = 300, Height = 14, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
