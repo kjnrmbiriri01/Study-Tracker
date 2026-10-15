@@ -272,7 +272,46 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "5.4";
+    public const string Version = "5.11";
+    // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
+    // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
+    public static string StatsCode = "3mkayderado";
+    public static string LastPingInfo = "no count sent yet", LastCountInfo = "";
+    public static bool SendPing(string path)
+    {
+        if (StatsCode.Length == 0) { LastPingInfo = "counter not configured"; return false; }
+        try
+        {
+            try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; } catch { }
+            var req = (HttpWebRequest)WebRequest.Create("https://" + StatsCode + ".goatcounter.com/count?p=" + Uri.EscapeDataString(path) + "&t=" + Uri.EscapeDataString("Study Tracker v" + Version) + "&rnd=" + DateTime.UtcNow.Ticks);
+            req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) StudyTracker/" + Version;   // identifies the app, but looks like a normal client so it is not treated as a crawler
+            req.Accept = "image/gif,image/*;q=0.8"; req.Headers[HttpRequestHeader.AcceptLanguage] = "en"; req.Timeout = 8000; req.ReadWriteTimeout = 8000;
+            using (var r = (HttpWebResponse)req.GetResponse())
+            {
+                bool ok = (int)r.StatusCode < 400; LastPingInfo = (ok ? "sent OK" : "rejected") + " (HTTP " + (int)r.StatusCode + ") at " + DateTime.Now.ToString("HH:mm"); return ok;
+            }
+        }
+        catch (Exception e) { LastPingInfo = "failed: " + e.Message; return false; }
+    }
+    // reads a public GoatCounter number (needs "Allow adding visitor counts on your website" in its settings); null when unavailable
+    public static string GetCount(string path, string query)
+    {
+        if (StatsCode.Length == 0) return null;
+        try
+        {
+            try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; } catch { }
+            var req = (HttpWebRequest)WebRequest.Create("https://" + StatsCode + ".goatcounter.com/counter/" + Uri.EscapeDataString(path) + ".json" + (query.Length > 0 ? "?" + query : ""));
+            req.UserAgent = "StudyTracker/" + Version; req.Timeout = 8000; req.ReadWriteTimeout = 8000;
+            string json;
+            using (var r = (HttpWebResponse)req.GetResponse()) using (var sr = new StreamReader(r.GetResponseStream(), Encoding.UTF8)) json = sr.ReadToEnd();
+            var m = Regex.Match(json, "\"count_unique\"\\s*:\\s*\"?([\\d,\\.]+)");
+            if (!m.Success) m = Regex.Match(json, "\"count\"\\s*:\\s*\"?([\\d,\\.]+)");
+            if (!m.Success) { LastCountInfo = "unexpected reply: " + (json.Length > 50 ? json.Substring(0, 50) : json).Replace("\n", " "); return null; }
+            return m.Groups[1].Value;
+        }
+        catch (WebException e) { var hr = e.Response as HttpWebResponse; LastCountInfo = hr != null ? "HTTP " + (int)hr.StatusCode : e.Status.ToString(); return (hr != null && hr.StatusCode == HttpStatusCode.NotFound) ? "0" : null; }
+        catch (Exception e) { LastCountInfo = e.Message; return null; }
+    }
     const string Owner = "kjnrmbiriri01", Repo = "Study-Tracker";
     public static string TempRoot { get { return Path.Combine(Path.GetTempPath(), "StudyTrackerUpdate"); } }
     static WebClient Client()
@@ -609,9 +648,9 @@ class MainForm : Form
     string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 9f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false, onboardingDone = false, minimizeDuringTimer = true;
     List<StudyTask> tasks = new List<StudyTask>(); List<Sess> sessions = new List<Sess>(); List<string[]> index = new List<string[]>();
     Panel banner, content; Panel[] pages = new Panel[PAGES]; Button[] nav = new Button[PAGES]; PictureBox pic; Button bDark, bPal;
-    bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
+    bool statsOptIn = true, statsAsked, installSent, statsBusy; Label lblUsers; Timer usersTimer; string uWeek, uMonth, uTotal; int usersTick; DateTime lastPing = DateTime.MinValue; bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
     Timer dotTimer, hourTimer; Label lblVer, lblUpdInfo, lblUpdStatus; Button bCheck, bInstall; ProgressBar prog; RadioButton rbAuto, rbManual;
-    TextBox txtTitle; Stepper numTarget; FlowLayoutPanel taskFlow, homeFlow; Card homeSum; Button[] homeFilters = new Button[3]; StudyTask selTask; Label lblPlanSummary; Label lblDayInfo; ListBox lbDay; DateTime selDay = DateTime.Today; Label lblStatus, lblHello, lblQuote, lblInst; Button btnRead; MiniTimer mini; StudyTask miniTask;
+    TextBox txtTitle; Stepper numTarget; FlowLayoutPanel taskFlow, homeFlow; Card homeSum; Button[] homeFilters = new Button[3]; StudyTask selTask; Label lblPlanSummary; Label lblDayInfo; ListBox lbDay; DateTime selDay = DateTime.Today; Label lblStatus, lblHello, lblQuote, lblInst; MiniTimer mini; StudyTask miniTask;
     Label lblSummary; ProgressBar bar; Panel chart; ListBox lbSubjects; NumericUpDown numGoal; Label lblRoot; TextBox txtSearch; ListView lvFiles;
     // focus timer (Pomodoro)
     Panel ring; Label lblRingTime, lblRingMode, lblFocusStatus; Button bStart, bReset, bSound; NumericUpDown numFocusMin; ComboBox cbSub; CheckBox chkLog;
@@ -628,10 +667,10 @@ class MainForm : Form
     public MainForm()
     {
         Text = "Study Tracker"; Width = 980; Height = 720; MinimumSize = new Size(880, 640); Font = new Font("Segoe UI", 9); StartPosition = FormStartPosition.CenterScreen;
-        dataFile = Path.Combine(App.DataDir, "study_data.txt"); bool dark = true; int pal = 0; Load_(ref dark, ref pal); Theme.Apply(dark, pal);
+        dataFile = Path.Combine(App.DataDir, "study_data.txt"); bool dark = true; int pal = 0; Load_(ref dark, ref pal); if (!statsAsked) statsOptIn = true; Theme.Apply(dark, pal);
         viewMonth = DateTime.Today;
         try { Icon = Icon.FromHandle(Theme.Logo(64).GetHicon()); } catch { }
-        content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14) }; Controls.Add(content);
+        content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14) }; Controls.Add(content); BuildFooter();
         for (int i = 0; i < PAGES; i++) { pages[i] = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Bg }; content.Controls.Add(pages[i]); }
         var navBar = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Theme.Bg };
         string[] names = { "Home", "Study Plan", "Focus Timer", "Stats", "Find Files", "Settings", "About" };
@@ -664,6 +703,7 @@ class MainForm : Form
                 }
             }
             AutoCheck();
+            RefreshUsers();
         };
     }
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); DarkBar(); }
@@ -729,6 +769,10 @@ class MainForm : Form
             else if (p[0] == "V" && p.Length > 1 && new string[] { "Segoe UI", "Arial", "Calibri", "Consolas" }.Contains(p[1])) uiFontFamily = p[1];
             else if (p[0] == "W" && p.Length > 1) onboardingDone = p[1] == "1";
             else if (p[0] == "X" && p.Length > 1) minimizeDuringTimer = p[1] == "1";
+            else if (p[0] == "Y" && p.Length > 1) statsOptIn = p[1] == "1";
+            else if (p[0] == "H" && p.Length > 1) statsAsked = p[1] == "1";
+            else if (p[0] == "O" && p.Length > 1) installSent = p[1] == "1";
+            else if (p[0] == "J" && p.Length > 1 && long.TryParse(p[1], out tk) && tk >= 0) lastPing = new DateTime(tk, DateTimeKind.Utc);
             else if (p[0] == "T" && p.Length > 3 && int.TryParse(p[2], out a)) tasks.Add(new StudyTask { Title = p[1], Target = a, Done = p[3] == "1" });
             else if (p[0] == "S" && p.Length > 4 && int.TryParse(p[3], out a) && int.TryParse(p[4], out b)) sessions.Add(new Sess { Date = p[1], Subject = p[2], Minutes = a, Pages = b });
         }
@@ -737,6 +781,7 @@ class MainForm : Form
     {
         if (loading) return;
         var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal, "F\t" + focusCount, "U\t" + stamp.Ticks, "K\t" + lastCheck.Ticks, "L\t" + latest.Ticks, "Z\t" + (autoMode ? "1" : "0"), "Q\t" + uiFontSize.ToString(CultureInfo.InvariantCulture), "V\t" + uiFontFamily, "W\t" + (onboardingDone ? "1" : "0"), "X\t" + (minimizeDuringTimer ? "1" : "0") };
+        l.Add("Y\t" + (statsOptIn ? "1" : "0")); l.Add("H\t" + (statsAsked ? "1" : "0")); l.Add("O\t" + (installSent ? "1" : "0")); l.Add("J\t" + lastPing.Ticks);
         foreach (var t in tasks) l.Add("T\t" + Clean(t.Title) + "\t" + t.Target + "\t" + (t.Done ? "1" : "0"));
         foreach (var s in sessions) l.Add("S\t" + s.Date + "\t" + Clean(s.Subject) + "\t" + s.Minutes + "\t" + s.Pages);
         try { Directory.CreateDirectory(App.DataDir); File.WriteAllLines(dataFile, l.ToArray()); } catch (Exception e) { MessageBox.Show("Could not save: " + e.Message); }
@@ -1205,7 +1250,7 @@ class MainForm : Form
         var contactTitle = new Label { Left = 10, Top = 240, Width = 800, Height = 26, Tag = "sub", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), Text = "Contact me" };
         var contact = new LinkLabel { Left = 10, Top = 268, Width = 600, Height = 26, Text = "kjnrmbiriri1+studytracker@gmail.com", Font = new Font("Segoe UI", 9) };
         contact.LinkClicked += delegate { try { Process.Start(new ProcessStartInfo("mailto:kjnrmbiriri1+studytracker@gmail.com") { UseShellExecute = true }); } catch { MessageBox.Show("Email: kjnrmbiriri1+studytracker@gmail.com", "Contact me"); } };
-        var tip = new Label { Left = 10, Top = 302, Width = 800, Height = 44, Tag = "muted", Text = "Tip: put a file named logo.png next to the app to replace the built-in logo. Your data stays on this computer (in your user folder) and never leaves it." };
+        var tip = new Label { Left = 10, Top = 302, Width = 800, Height = 44, Tag = "muted", Text = "Tip: put a file named logo.png next to the app to replace the built-in logo. Your study data stays on this computer and never leaves it. Optional network use: the daily update check, and an anonymous daily \"app opened\" count (switch it off any time in Settings)." };
         lblInst = new Label { Left = 10, Top = 352, Width = 800, Height = 24, Tag = "muted", Text = "Installed at: " + (Installer.RunningInstalled() ? App.ExeDir : "not installed (running portable)") };
         var bun = Theme.Btn("Uninstall Study Tracker", 10, 386, 220, "b"); bun.Height = 36;
         bun.Click += delegate { if (Installer.Uninstall(this)) { loading = true; Environment.Exit(0); } };
@@ -1235,7 +1280,10 @@ class MainForm : Form
         fontPick.SelectedIndexChanged += delegate { float next = new float[] { 9f, 10f, 12f, 14f }[fontPick.SelectedIndex]; Theme.ScaleFonts(this, next / uiFontSize); uiFontSize = next; Theme.FontScale = next / 9f; RefreshTasks(); RefreshStats(); Save(); };
         var minimizeCheck = new CheckBox { Left = 10, Top = 240, Width = 500, Height = 26, Text = "Minimize Study Tracker while the reading timer is running", Checked = minimizeDuringTimer };
         minimizeCheck.CheckedChanged += delegate { minimizeDuringTimer = minimizeCheck.Checked; Save(); };
-        var updatesHead = new Label { Left = 10, Top = 276, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
+        var statsCheck = new CheckBox { Left = 10, Top = 272, Width = 820, Height = 26, Visible = Updater.StatsCode.Length > 0, Checked = statsOptIn,
+            Text = "Share an anonymous daily usage count (no personal data)" };
+        statsCheck.CheckedChanged += delegate { statsOptIn = statsCheck.Checked; statsAsked = true; Save(); if (statsOptIn) StatsPing(); RefreshUsers(); };
+        var updatesHead = new Label { Left = 10, Top = 310, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
         lblVer = new Label { Left = 10, Top = 54, Width = 700, Height = 28, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold) };
         lblUpdInfo = new Label { Left = 10, Top = 88, Width = 800, Height = 42, Tag = "muted" };
         lblUpdStatus = new Label { Left = 10, Top = 136, Width = 820, Height = 30, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "white" };
@@ -1245,8 +1293,8 @@ class MainForm : Form
         rbAuto = new RadioButton { Left = 10, Top = 226, Width = 820, Height = 26, Text = "Automatic updates", Checked = autoMode };
         rbManual = new RadioButton { Left = 10, Top = 256, Width = 820, Height = 26, Text = "Notify me; let me install updates", Checked = !autoMode };
         var note = new Label { Left = 10, Top = 350, Width = 820, Height = 28, Tag = "muted", Text = "Your study data stays on this computer during updates." };
-        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, minimizeCheck, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
-        lblVer.Top = 310; lblUpdInfo.Top = 342; lblUpdStatus.Top = 386; bCheck.Top = 426; bInstall.Top = 426; prog.Top = 438; rbAuto.Top = 472; rbManual.Top = 502; note.Top = 536;
+        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, minimizeCheck, statsCheck, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
+        lblVer.Top = 344; lblUpdInfo.Top = 376; lblUpdStatus.Top = 420; bCheck.Top = 460; bInstall.Top = 460; prog.Top = 472; rbAuto.Top = 506; rbManual.Top = 536; note.Top = 570;
         bCheck.Click += delegate { CheckNow(true); };
         bInstall.Click += delegate { InstallUpdate(false); };
         rbAuto.CheckedChanged += delegate { autoMode = rbAuto.Checked; Save(); };
@@ -1276,8 +1324,49 @@ class MainForm : Form
         // also check immediately when internet (re)connects — still at most once per calendar day
         NetworkChange.NetworkAvailabilityChanged += delegate { Ui(delegate { AutoCheck(); }); };
     }
+    void BuildFooter()
+    {
+        var foot = new Panel { Dock = DockStyle.Bottom, Height = 30, Tag = "card", Visible = Updater.StatsCode.Length > 0 };
+        foot.Paint += (s, e) => { using (var pen = new Pen(Theme.Border)) e.Graphics.DrawLine(pen, 0, 0, foot.Width, 0); };
+        lblUsers = new Label { Dock = DockStyle.Fill, Padding = new Padding(16, 0, 0, 0), TextAlign = ContentAlignment.MiddleLeft, Tag = "muted", AutoEllipsis = true, Text = "Active users: loading..." };
+        foot.Controls.Add(lblUsers); Controls.Add(foot);
+        usersTimer = new Timer { Interval = 120000 }; usersTimer.Tick += delegate { RefreshUsers(); }; usersTimer.Start();   // every 2 minutes
+    }
+    void RefreshUsers()
+    {
+        if (lblUsers == null || Updater.StatsCode.Length == 0) return;
+        if (!statsOptIn) { lblUsers.Text = "Active users: hidden while the usage count is switched off in Settings"; return; }
+        if (WindowState == FormWindowState.Minimized) return;                 // nobody is looking: save the data
+        bool full = (usersTick++ % 5 == 0) || uWeek == null;                  // "Today" every 2 min; the slower-moving numbers every 10 min
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        {
+            string td = DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            string a = Updater.GetCount("/active", "start=" + td);
+            if (a == null) a = Updater.GetCount("/active", "start=" + td + "&end=" + DateTime.Today.AddDays(1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            if (full) { uWeek = Updater.GetCount("/active", "start=week"); uMonth = Updater.GetCount("/active", "start=month"); uTotal = Updater.GetCount("/install", ""); }
+            string w = uWeek, m = uMonth, t = uTotal;
+            Ui(delegate
+            {
+                lblUsers.Text = (a == null && w == null && m == null && t == null) ? "Active users: not available right now (" + Updater.LastCountInfo + ")"
+                    : "Active users   Today " + (a ?? "-") + "   |   Last 7 days " + (w ?? "-") + "   |   Last month " + (m ?? "-") + "   |   Total installs " + (t ?? "-") + ((a == null || w == null || m == null || t == null) ? "   (" + Updater.LastCountInfo + ")" : "");
+            });
+        });
+    }
+    void StatsPing()
+    {
+        if (!statsOptIn || statsBusy || Updater.StatsCode.Length == 0) return;
+        if (lastPing != DateTime.MinValue && lastPing.ToLocalTime().Date == DateTime.Now.Date) return;   // at most once per local day
+        statsBusy = true; bool first = !installSent;
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        {
+            bool installOk = !first || Updater.SendPing("/install");   // counted once per installation
+            bool ok = installOk && Updater.SendPing("/active");        // counted once per day
+            Ui(delegate { statsBusy = false; if (installOk) installSent = true; if (ok) lastPing = DateTime.UtcNow; Save(); RefreshUsers(); });
+        });
+    }
     void AutoCheck()
     {
+        StatsPing();
         // daily: at most one successful check per local calendar day; failures (offline) retry hourly / on reconnect
         if (!busy && (lastCheck == DateTime.MinValue || lastCheck.ToLocalTime().Date != DateTime.Now.Date)) CheckNow(false);
     }
