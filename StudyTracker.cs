@@ -272,7 +272,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "5.11";
+    public const string Version = "5.12";
     // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
     // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
     public static string StatsCode = "3mkayderado";
@@ -1283,18 +1283,18 @@ class MainForm : Form
         var statsCheck = new CheckBox { Left = 10, Top = 272, Width = 820, Height = 26, Visible = Updater.StatsCode.Length > 0, Checked = statsOptIn,
             Text = "Share an anonymous daily usage count (no personal data)" };
         statsCheck.CheckedChanged += delegate { statsOptIn = statsCheck.Checked; statsAsked = true; Save(); if (statsOptIn) StatsPing(); RefreshUsers(); };
-        var updatesHead = new Label { Left = 10, Top = 310, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
-        lblVer = new Label { Left = 10, Top = 54, Width = 700, Height = 28, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold) };
-        lblUpdInfo = new Label { Left = 10, Top = 88, Width = 800, Height = 42, Tag = "muted" };
-        lblUpdStatus = new Label { Left = 10, Top = 136, Width = 820, Height = 30, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "white" };
-        bCheck = Theme.Btn("Check for updates", 10, 176, 190, "a"); bCheck.Height = 38;
-        bInstall = Theme.Btn("Install update now", 210, 176, 190, "c"); bInstall.Height = 38; bInstall.Visible = false;
-        prog = new ProgressBar { Left = 410, Top = 188, Width = 300, Height = 14, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
-        rbAuto = new RadioButton { Left = 10, Top = 226, Width = 820, Height = 26, Text = "Automatic updates", Checked = autoMode };
-        rbManual = new RadioButton { Left = 10, Top = 256, Width = 820, Height = 26, Text = "Notify me; let me install updates", Checked = !autoMode };
-        var note = new Label { Left = 10, Top = 350, Width = 820, Height = 28, Tag = "muted", Text = "Your study data stays on this computer during updates." };
+        int y0 = 310;   // every control in this section is placed relative to this one value, so they can never drift apart
+        var updatesHead = new Label { Left = 10, Top = y0, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
+        lblVer = new Label { Left = 10, Top = y0 + 34, Width = 700, Height = 26, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold) };
+        lblUpdInfo = new Label { Left = 10, Top = y0 + 62, Width = 800, Height = 24, Tag = "muted" };
+        lblUpdStatus = new Label { Left = 10, Top = y0 + 90, Width = 820, Height = 28, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "white" };
+        bCheck = Theme.Btn("Check for updates", 10, y0 + 126, 180, "a"); bCheck.Height = 38;
+        bInstall = Theme.Btn("Install update now", 200, y0 + 126, 190, "c"); bInstall.Height = 38; bInstall.Visible = false;   // same row, same height, right next to Check
+        prog = new ProgressBar { Left = 404, Top = y0 + 139, Width = 260, Height = 12, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
+        rbAuto = new RadioButton { Left = 10, Top = y0 + 180, Width = 820, Height = 26, Text = "Automatic updates", Checked = autoMode };
+        rbManual = new RadioButton { Left = 10, Top = y0 + 208, Width = 820, Height = 26, Text = "Notify me; let me install updates", Checked = !autoMode };
+        var note = new Label { Left = 10, Top = y0 + 242, Width = 820, Height = 24, Tag = "muted", Text = "Your study data stays on this computer during updates." };
         p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, minimizeCheck, statsCheck, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
-        lblVer.Top = 344; lblUpdInfo.Top = 376; lblUpdStatus.Top = 420; bCheck.Top = 460; bInstall.Top = 460; prog.Top = 472; rbAuto.Top = 506; rbManual.Top = 536; note.Top = 570;
         bCheck.Click += delegate { CheckNow(true); };
         bInstall.Click += delegate { InstallUpdate(false); };
         rbAuto.CheckedChanged += delegate { autoMode = rbAuto.Checked; Save(); };
