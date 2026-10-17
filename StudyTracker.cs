@@ -18,7 +18,14 @@ using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-class StudyTask { public string Title; public int Target; public bool Done; }
+class StudyTask
+{
+    public string Title; public int Target; public bool Done; public string Due = "";   // Due = yyyy-MM-dd or empty
+    public DateTime? DueDate { get { DateTime d; return DateTime.TryParseExact(Due ?? "", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d) ? (DateTime?)d : null; } }
+    public int DaysLeft { get { var d = DueDate; return d.HasValue ? (int)(d.Value.Date - DateTime.Today).TotalDays : int.MaxValue; } }
+    public string DueText { get { var d = DueDate; if (!d.HasValue) return ""; int n = DaysLeft; return n < 0 ? "Overdue by " + (-n) + " day(s)" : n == 0 ? "Due today" : n == 1 ? "Due tomorrow" : "Due in " + n + " days"; } }
+}
+class BookProg { public string FilePath; public int Page, Total; public long Opened; }
 class Sess { public string Date, Subject; public int Minutes, Pages; }
 
 static class App
@@ -272,7 +279,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "5.12";
+    public const string Version = "6.1";
     // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
     // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
     public static string StatsCode = "3mkayderado";
@@ -536,8 +543,12 @@ class Stepper : Card
         Resize += delegate { Lay(); }; Lay(); Value = val;
     }
     void Lay() { bm.Left = 3; bp.Left = Width - 33; lbl.Left = 34; lbl.Width = Math.Max(20, Width - 68); }
-    public int Value { get { return val; } set { val = Math.Max(Min, Math.Min(Max, value)); lbl.Text = val + " " + suf; } }
-    public string Suffix { get { return suf; } set { suf = value; lbl.Text = val + " " + suf; } }
+    public event EventHandler Changed;
+    bool clock;
+    public bool Clock { get { return clock; } set { clock = value; lbl.Text = Shown(); } }   // value = minutes since midnight
+    string Shown() { return clock ? (val / 60).ToString("00") + ":" + (val % 60).ToString("00") : val + " " + suf; }
+    public int Value { get { return val; } set { val = clock ? ((value % 1440) + 1440) % 1440 : Math.Max(Min, Math.Min(Max, value)); lbl.Text = Shown(); if (Changed != null) Changed(this, EventArgs.Empty); } }
+    public string Suffix { get { return suf; } set { suf = value; lbl.Text = Shown(); } }
 }
 
 // ===== Modern pop-up used for names, "log time" and the reading timer =====
@@ -574,6 +585,33 @@ class AskForm : Form
         card.Controls.Add(tb); Controls.Add(card); Buttons(236);
         Shown += delegate { tb.Focus(); tb.SelectAll(); };
     }
+    public bool NoDate;
+    public string DateResult { get { return NoDate ? "" : DateTime.Today.AddDays(Minutes).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); } }
+    public AskForm(string title, string sub, DateTime? cur, bool dateMode)   // pick a date: "days from today" + quick chips
+    {
+        int h = 322; Init(title, sub, h);
+        Controls.Add(new Label { Left = 24, Top = 86, Width = 392, Height = 22, Text = "How many days from today?", Tag = "muted" });
+        int start = cur.HasValue ? Math.Max(0, (int)(cur.Value.Date - DateTime.Today).TotalDays) : 7;
+        sm = new Stepper { Left = 24, Top = 112, Width = 190, Min = 0, Max = 730, Step = 1, Suffix = "days", Value = start }; Controls.Add(sm);
+        var when = new Label { Left = 226, Top = 119, Width = 200, Height = 24, Tag = "title", Font = new Font("Segoe UI", 10, FontStyle.Bold) }; Controls.Add(when);
+        Action upd = delegate { when.Text = DateTime.Today.AddDays(sm.Value).ToString("ddd d MMM yyyy", CultureInfo.CurrentCulture); };
+        sm.Changed += delegate { upd(); }; upd();
+        int[] q = { 0, 1, 3, 7, 14, 30 }; string[] qn = { "Today", "Tomorrow", "3 days", "1 week", "2 weeks", "1 month" };
+        for (int i = 0; i < q.Length; i++) { int v = q[i]; var c = Theme.Btn(qn[i], 24 + i * 66, 166, 62, "a"); c.Height = 30; c.Click += delegate { sm.Value = v; }; Controls.Add(c); }
+        var nd = Theme.Btn("No date", 24, h - 56, 100, "b"); nd.Height = 36; nd.Click += delegate { NoDate = true; DialogResult = DialogResult.OK; Close(); }; Controls.Add(nd);
+        Buttons(h);
+    }
+    public AskForm(string title, string sub, int page, int total)   // reading progress: current page + total pages
+    {
+        int h = 322; Init(title, sub, h);
+        Controls.Add(new Label { Left = 24, Top = 86, Width = 392, Height = 22, Text = "Current page", Tag = "muted" });
+        sm = new Stepper { Left = 24, Top = 112, Width = 190, Min = 0, Max = 20000, Step = 1, Suffix = "", Value = page }; Controls.Add(sm);
+        int[] inc = { 1, 5, 10, 25 };
+        for (int i = 0; i < inc.Length; i++) { int v = inc[i]; var c = Theme.Btn("+" + v, 226 + i * 52, 114, 48, "a"); c.Height = 32; c.Click += delegate { sm.Value = sm.Value + v; }; Controls.Add(c); }
+        Controls.Add(new Label { Left = 24, Top = 172, Width = 392, Height = 22, Text = "Total pages in this file", Tag = "muted" });
+        sp = new Stepper { Left = 24, Top = 198, Width = 190, Min = 0, Max = 20000, Step = 10, Suffix = "", Value = total }; Controls.Add(sp);
+        Buttons(h);
+    }
     public AskForm(string title, string sub, string label, int def, bool pages)   // minutes (+ optional pages)
     {
         int h = pages ? 346 : 272; Init(title, sub, h);
@@ -590,6 +628,32 @@ class AskForm : Form
     }
 }
 
+// ===== Simple read-only report window (weekly summary) =====
+class InfoForm : Form
+{
+    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); try { int v = Theme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref v, 4); DwmSetWindowAttribute(Handle, 19, ref v, 4); } catch { } }
+    public InfoForm(string title, string sub, List<string[]> rows)
+    {
+        FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
+        int h = 90 + rows.Count * 52 + 90; ClientSize = new Size(460, h); BackColor = Theme.Bg; Font = new Font("Segoe UI", 9); Text = title;
+        var head = new Panel { Dock = DockStyle.Top, Height = 70, Tag = "banner" };
+        head.Paint += (s, e) => { using (var gb = new LinearGradientBrush(head.ClientRectangle, Theme.Base, Theme.Accent, 0f)) e.Graphics.FillRectangle(gb, head.ClientRectangle); };
+        head.Controls.Add(new Label { Left = 22, Top = 10, Width = 410, Height = 28, Text = title, Tag = "white", ForeColor = Color.White, Font = new Font("Segoe UI", 15, FontStyle.Bold) });
+        head.Controls.Add(new Label { Left = 24, Top = 40, Width = 410, Height = 22, Text = sub, Tag = "white", ForeColor = Color.FromArgb(215, 245, 240) });
+        Controls.Add(head);
+        var card = new Card { Left = 24, Top = 86, Width = 412, Height = rows.Count * 52 + 10 };
+        for (int i = 0; i < rows.Count; i++)
+        {
+            card.Controls.Add(new Label { Left = 16, Top = 10 + i * 52, Width = 380, Height = 18, Text = rows[i][0], Tag = "muted" });
+            card.Controls.Add(new Label { Left = 16, Top = 28 + i * 52, Width = 380, Height = 24, Text = rows[i][1], Font = new Font("Segoe UI", 10.5f, FontStyle.Bold) });
+        }
+        Controls.Add(card);
+        var ok = Theme.Btn("Close", 336, h - 52, 100, "a"); ok.Height = 36; ok.DialogResult = DialogResult.OK; Controls.Add(ok); AcceptButton = ok; CancelButton = ok;
+        Theme.Skin(this); Theme.ApplyUserFont(this, true);
+    }
+}
+
 // ===== Compact task row for the Home tab =====
 class TaskRow : Card
 {
@@ -603,10 +667,10 @@ class TaskRow : Card
         else using (var pen = new Pen(Theme.Border, 2f)) g.DrawEllipse(pen, c);
         var fl = TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter; int tw = Math.Max(60, Width - 290);
         TextRenderer.DrawText(g, T.Title, Theme.F(9.5f, FontStyle.Bold), new Rectangle(52, 7, tw, 22), T.Done ? Theme.Muted : Theme.Text, fl);
-        TextRenderer.DrawText(g, (T.Target > 0 ? Studied + " / " + T.Target : Studied.ToString()) + " min studied", Theme.F(8.5f), new Rectangle(52, 29, tw, 18), Theme.Muted, fl);
-        Color cc = T.Done ? Theme.Accent : Theme.Accent3; var chip = new Rectangle(Width - 192, 15, 84, 26);
+        TextRenderer.DrawText(g, (T.Target > 0 ? Studied + " / " + T.Target : Studied.ToString()) + " min studied" + (T.Done || T.DueText.Length == 0 ? "" : "   |   " + T.DueText), Theme.F(8.5f), new Rectangle(52, 29, tw, 18), (!T.Done && T.DaysLeft < 0) ? Color.FromArgb(230, 90, 90) : Theme.Muted, fl);
+        Color cc = T.Done ? Theme.Accent : (T.DaysLeft < 0 ? Color.FromArgb(230, 90, 90) : Theme.Accent3); var chip = new Rectangle(Width - 192, 15, 84, 26);
         using (var gp = Theme.Round(chip, 26)) { using (var br = new SolidBrush(Color.FromArgb(50, cc))) g.FillPath(br, gp); using (var pen = new Pen(cc)) g.DrawPath(pen, gp); }
-        TextRenderer.DrawText(g, T.Done ? "Completed" : "To do", Theme.F(8.5f), chip, cc, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(g, T.Done ? "Completed" : (T.DaysLeft < 0 ? "Overdue" : "To do"), Theme.F(8.5f), chip, cc, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 }
 
@@ -632,6 +696,8 @@ class TaskCard : Card
         var fl = TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter;
         TextRenderer.DrawText(g, T.Title, fT, new Rectangle(56, 10, tw, 26), T.Done ? Theme.Muted : Theme.Text, fl);
         TextRenderer.DrawText(g, "Studied " + Studied + " of " + T.Target + " min" + (T.Done ? "  -  completed" : ""), fS, new Rectangle(56, 36, tw, 20), Theme.Muted, fl);
+        string dueTxt = T.Done ? "" : T.DueText;
+        if (dueTxt.Length > 0) TextRenderer.DrawText(g, dueTxt, fS, new Rectangle(56, 36, tw, 20), T.DaysLeft < 0 ? Color.FromArgb(230, 90, 90) : T.DaysLeft <= 2 ? Theme.Accent3 : Theme.Muted, fl | TextFormatFlags.Right);
         int pct = T.Target > 0 ? Math.Min(100, Studied * 100 / T.Target) : (Studied > 0 ? 100 : 0);
         var tr = new Rectangle(56, 66, tw, 10);
         using (var gp = Theme.Round(tr, 10)) using (var br = new SolidBrush(Theme.Border)) g.FillPath(br, gp);
@@ -648,6 +714,7 @@ class MainForm : Form
     string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 9f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false, onboardingDone = false, minimizeDuringTimer = true;
     List<StudyTask> tasks = new List<StudyTask>(); List<Sess> sessions = new List<Sess>(); List<string[]> index = new List<string[]>();
     Panel banner, content; Panel[] pages = new Panel[PAGES]; Button[] nav = new Button[PAGES]; PictureBox pic; Button bDark, bPal;
+    string examName = "", examDate = "", lastSummary = "", lastDaily = ""; bool remDaily, remBreak, remTray, exiting, trayHinted; int remHour = 18, remMinute = 0, remBreakMin = 45; double breakAcc; NotifyIcon tray; Timer remTimer; Dictionary<string, BookProg> books = new Dictionary<string, BookProg>(); string newDue = ""; Button bDue;
     bool statsOptIn = true, statsAsked, installSent, statsBusy; Label lblUsers; Timer usersTimer; string uWeek, uMonth, uTotal; int usersTick; DateTime lastPing = DateTime.MinValue; bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
     Timer dotTimer, hourTimer; Label lblVer, lblUpdInfo, lblUpdStatus; Button bCheck, bInstall; ProgressBar prog; RadioButton rbAuto, rbManual;
     TextBox txtTitle; Stepper numTarget; FlowLayoutPanel taskFlow, homeFlow; Card homeSum; Button[] homeFilters = new Button[3]; StudyTask selTask; Label lblPlanSummary; Label lblDayInfo; ListBox lbDay; DateTime selDay = DateTime.Today; Label lblStatus, lblHello, lblQuote, lblInst; MiniTimer mini; StudyTask miniTask;
@@ -704,6 +771,7 @@ class MainForm : Form
             }
             AutoCheck();
             RefreshUsers();
+            MaybeWeekly();
         };
     }
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); DarkBar(); }
@@ -773,7 +841,15 @@ class MainForm : Form
             else if (p[0] == "H" && p.Length > 1) statsAsked = p[1] == "1";
             else if (p[0] == "O" && p.Length > 1) installSent = p[1] == "1";
             else if (p[0] == "J" && p.Length > 1 && long.TryParse(p[1], out tk) && tk >= 0) lastPing = new DateTime(tk, DateTimeKind.Utc);
-            else if (p[0] == "T" && p.Length > 3 && int.TryParse(p[2], out a)) tasks.Add(new StudyTask { Title = p[1], Target = a, Done = p[3] == "1" });
+            else if (p[0] == "E" && p.Length > 2) { examName = p[1]; examDate = p[2]; }
+            else if (p[0] == "I" && p.Length > 1) lastSummary = p[1];
+            else if (p[0] == "B" && p.Length > 4 && int.TryParse(p[2], out a) && int.TryParse(p[3], out b) && long.TryParse(p[4], out tk)) books[p[1]] = new BookProg { FilePath = p[1], Page = a, Total = b, Opened = tk };
+            else if (p[0] == "C" && p.Length > 7)
+            {
+                remDaily = p[1] == "1"; if (int.TryParse(p[2], out a)) remHour = a; if (int.TryParse(p[3], out a)) remMinute = a;
+                remBreak = p[4] == "1"; if (int.TryParse(p[5], out a)) remBreakMin = a; remTray = p[6] == "1"; lastDaily = p[7];
+            }
+            else if (p[0] == "T" && p.Length > 3 && int.TryParse(p[2], out a)) tasks.Add(new StudyTask { Title = p[1], Target = a, Done = p[3] == "1", Due = p.Length > 4 ? p[4] : "" });
             else if (p[0] == "S" && p.Length > 4 && int.TryParse(p[3], out a) && int.TryParse(p[4], out b)) sessions.Add(new Sess { Date = p[1], Subject = p[2], Minutes = a, Pages = b });
         }
     }
@@ -782,7 +858,10 @@ class MainForm : Form
         if (loading) return;
         var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal, "F\t" + focusCount, "U\t" + stamp.Ticks, "K\t" + lastCheck.Ticks, "L\t" + latest.Ticks, "Z\t" + (autoMode ? "1" : "0"), "Q\t" + uiFontSize.ToString(CultureInfo.InvariantCulture), "V\t" + uiFontFamily, "W\t" + (onboardingDone ? "1" : "0"), "X\t" + (minimizeDuringTimer ? "1" : "0") };
         l.Add("Y\t" + (statsOptIn ? "1" : "0")); l.Add("H\t" + (statsAsked ? "1" : "0")); l.Add("O\t" + (installSent ? "1" : "0")); l.Add("J\t" + lastPing.Ticks);
-        foreach (var t in tasks) l.Add("T\t" + Clean(t.Title) + "\t" + t.Target + "\t" + (t.Done ? "1" : "0"));
+        l.Add("E\t" + Clean(examName) + "\t" + examDate); l.Add("I\t" + lastSummary);
+        l.Add("C\t" + (remDaily ? "1" : "0") + "\t" + remHour + "\t" + remMinute + "\t" + (remBreak ? "1" : "0") + "\t" + remBreakMin + "\t" + (remTray ? "1" : "0") + "\t" + lastDaily);
+        foreach (var bk in books.Values) l.Add("B\t" + bk.FilePath + "\t" + bk.Page + "\t" + bk.Total + "\t" + bk.Opened);
+        foreach (var t in tasks) l.Add("T\t" + Clean(t.Title) + "\t" + t.Target + "\t" + (t.Done ? "1" : "0") + "\t" + t.Due);
         foreach (var s in sessions) l.Add("S\t" + s.Date + "\t" + Clean(s.Subject) + "\t" + s.Minutes + "\t" + s.Pages);
         try { Directory.CreateDirectory(App.DataDir); File.WriteAllLines(dataFile, l.ToArray()); } catch (Exception e) { MessageBox.Show("Could not save: " + e.Message); }
     }
@@ -799,9 +878,16 @@ class MainForm : Form
         string[] n = { "All tasks", "To do", "Completed" };
         for (int i = 0; i < 3; i++) { int k = i; homeFilters[i] = Theme.Btn(n[i], i * 142, 6, 134, "nav"); homeFilters[i].Height = 34; homeFilters[i].Click += delegate { homeFilter = k; RefreshHome(); }; row.Controls.Add(homeFilters[i]); }
         var add = Theme.Btn("+ New task", 436, 6, 120, "b"); add.Height = 34; add.Click += delegate { ShowPage(PAGE_PLAN); txtTitle.Focus(); };
-        row.Controls.Add(add); p.Controls.Add(row);
+        var exam = Theme.Btn("Exam date", 564, 6, 110, "c"); exam.Height = 34;
+        exam.Click += delegate
+        {
+            string nm = Prompt("Exam countdown", "What is your exam called? (e.g. Anatomy final)", examName); if (nm == null) return;
+            string d = AskDate("Exam date", string.IsNullOrWhiteSpace(nm) ? "Pick the day" : nm.Trim(), examDate); if (d == null) return;
+            examName = nm.Trim(); examDate = d; Save(); homeSum.Invalidate();
+        };
+        row.Controls.Add(add); row.Controls.Add(exam); p.Controls.Add(row);
         p.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 10 });
-        homeSum = new Card { Dock = DockStyle.Top, Height = 84 }; homeSum.Paint += DrawHomeSum; p.Controls.Add(homeSum);
+        homeSum = new Card { Dock = DockStyle.Top, Height = 96 }; homeSum.Paint += DrawHomeSum; p.Controls.Add(homeSum);
     }
     void DrawHomeSum(object sender, PaintEventArgs e)
     {
@@ -810,10 +896,30 @@ class MainForm : Form
         TextRenderer.DrawText(g, all == 0 ? "No tasks yet" : done + " of " + all + " tasks completed", Theme.F(11.5f, FontStyle.Bold), new Point(18, 12), Theme.Text);
         int today = sessions.Where(x => x.Date == Today()).Sum(x => x.Minutes);
         TextRenderer.DrawText(g, "Studied today: " + today + " min", Theme.F(8.5f), new Rectangle(homeSum.Width - 240, 14, 224, 20), Theme.Muted, TextFormatFlags.Right);
-        var tr = new Rectangle(18, 52, Math.Max(40, homeSum.Width - 36 - 52), 12);
+        string ex = ExamText(); if (ex.Length > 0) TextRenderer.DrawText(g, ex, Theme.F(9.5f, FontStyle.Bold), new Point(18, 38), Theme.Accent2);
+        var tr = new Rectangle(18, 68, Math.Max(40, homeSum.Width - 36 - 52), 12);
         using (var gp = Theme.Round(tr, 12)) using (var br = new SolidBrush(Theme.Border)) g.FillPath(br, gp);
         if (pct > 0) { var fr = new Rectangle(tr.X, tr.Y, Math.Max(12, tr.Width * pct / 100), 12); using (var gp = Theme.Round(fr, 12)) using (var br = new LinearGradientBrush(fr, Theme.Accent, Theme.Accent2, 0f)) g.FillPath(br, gp); }
-        TextRenderer.DrawText(g, pct + "%", Theme.F(8.5f), new Rectangle(tr.Right + 6, 48, 44, 20), Theme.Muted);
+        TextRenderer.DrawText(g, pct + "%", Theme.F(8.5f), new Rectangle(tr.Right + 6, 64, 44, 20), Theme.Muted);
+    }
+    string AskDate(string title, string sub, string cur)
+    {
+        DateTime d; DateTime? c = DateTime.TryParseExact(cur ?? "", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d) ? (DateTime?)d : null;
+        using (var f = new AskForm(title, sub, c, true)) return f.ShowDialog(this) == DialogResult.OK ? f.DateResult : null;
+    }
+    string DueButtonText(string key) { DateTime d; return DateTime.TryParseExact(key ?? "", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d) ? "Due: " + d.ToString("ddd d MMM", CultureInfo.CurrentCulture) : "Due: none"; }
+    ContextMenuStrip DueMenu(StudyTask t)
+    {
+        var m = new ContextMenuStrip();
+        m.Items.Add("Set due date...", null, delegate { string d = AskDate("Due date", t.Title, t.Due); if (d != null) { t.Due = d; Save(); RefreshTasks(); RefreshHome(); } });
+        m.Items.Add("Clear due date", null, delegate { t.Due = ""; Save(); RefreshTasks(); RefreshHome(); });
+        return m;
+    }
+    string ExamText()
+    {
+        DateTime d; if (!DateTime.TryParseExact(examDate ?? "", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d)) return "";
+        int n = (int)(d.Date - DateTime.Today).TotalDays; string nm = string.IsNullOrEmpty(examName) ? "Exam" : examName;
+        return n < 0 ? nm + " was " + (-n) + " day(s) ago" : n == 0 ? nm + " is today. Good luck!" : nm + ": " + n + " day(s) to go";
     }
     void RefreshHome()
     {
@@ -823,7 +929,7 @@ class MainForm : Form
         for (int i = 0; i < 3; i++) { homeFilters[i].Text = n[i]; homeFilters[i].BackColor = i == homeFilter ? Theme.Accent : Theme.Card; homeFilters[i].ForeColor = i == homeFilter ? Color.White : Theme.Text; }
         homeFlow.SuspendLayout();
         foreach (Control c in homeFlow.Controls.Cast<Control>().ToList()) { homeFlow.Controls.Remove(c); c.Dispose(); }
-        var list = tasks.Where(x => homeFilter == 0 || (homeFilter == 1 && !x.Done) || (homeFilter == 2 && x.Done)).OrderBy(x => x.Done).ToList();
+        var list = tasks.Where(x => homeFilter == 0 || (homeFilter == 1 && !x.Done) || (homeFilter == 2 && x.Done)).OrderBy(x => x.Done).ThenBy(x => x.DaysLeft).ToList();
         if (list.Count == 0) homeFlow.Controls.Add(new Label { Width = HomeW(), Height = 80, Tag = "muted", TextAlign = ContentAlignment.MiddleCenter,
             Text = tasks.Count == 0 ? "No tasks yet. Press + New task to add your first one." : homeFilter == 1 ? "Nothing left to do. Nice work!" : "Nothing completed yet. Click a task's circle to move it here." });
         int w = HomeW();
@@ -832,7 +938,7 @@ class MainForm : Form
             var r = new TaskRow { T = t, Studied = Studied(t.Title), Width = w, Height = 56, Margin = new Padding(0, 0, 0, 8) };
             var open = Theme.Btn("Open", w - 96, 11, 80, "a"); open.Height = 32; open.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             open.Click += delegate { ShowTask(t); };
-            r.Controls.Add(open);
+            r.Controls.Add(open); r.ContextMenuStrip = DueMenu(t);
             r.OnToggle = k => { k.T.Done = !k.T.Done; Save(); RefreshTasks(); };
             homeFlow.Controls.Add(r);
         }
@@ -846,7 +952,7 @@ class MainForm : Form
         taskFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
         taskFlow.Resize += delegate { int w = CardW(); foreach (Control c in taskFlow.Controls) c.Width = w; };
         p.Controls.Add(taskFlow);
-        lblStatus = new Label { Dock = DockStyle.Bottom, Height = 30, Tag = "muted", TextAlign = ContentAlignment.MiddleLeft, Text = "Click a card to select it (click empty space to deselect), or press Start for a pop-up reading timer." };
+        lblStatus = new Label { Dock = DockStyle.Bottom, Height = 30, Tag = "muted", TextAlign = ContentAlignment.MiddleLeft, Text = "Click a card to select it (click empty space to deselect), or press Start for a pop-up reading timer. Right-click a card to set a due date." };
         p.Controls.Add(lblStatus);
         lblPlanSummary = new Label { Dock = DockStyle.Top, Height = 34, Tag = "muted", TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
         p.Controls.Add(lblPlanSummary);
@@ -854,14 +960,16 @@ class MainForm : Form
         var bar2 = new Card { Dock = DockStyle.Fill };
         txtTitle = new TextBox { Left = 20, Top = 15, Width = 300, Font = new Font("Segoe UI", 10.5f), Tag = "flat" };
         numTarget = new Stepper { Top = 10 };
+        bDue = Theme.Btn("Due: none", 0, 11, 130, "c"); bDue.Height = 34;
                 var bAdd = Theme.Btn("Add task", 0, 10, 110, "a"); bAdd.Height = 36;
-        bar2.Controls.AddRange(new Control[] { txtTitle, numTarget, bAdd });
-        Action lay = delegate { int w = bar2.Width; bAdd.Left = w - 126; numTarget.Left = w - 262; txtTitle.Width = Math.Max(100, w - 262 - 34); };
+        bar2.Controls.AddRange(new Control[] { txtTitle, numTarget, bDue, bAdd });
+        Action lay = delegate { int w = bar2.Width; bAdd.Left = w - 126; numTarget.Left = w - 262; bDue.Left = w - 400; txtTitle.Width = Math.Max(100, w - 400 - 34); };
         bar2.Resize += delegate { lay(); }; lay();
         holder.Controls.Add(bar2); p.Controls.Add(holder);
         foreach (Control c0 in new Control[] { taskFlow, p, holder, bar2, lblPlanSummary, lblStatus }) c0.MouseDown += delegate { ClearSel(); };
         txtTitle.HandleCreated += delegate { SendMessage(txtTitle.Handle, 0x1501, 1, "What are you studying today?"); };
         bAdd.Click += delegate { AddTask(); };
+        bDue.Click += delegate { string d = AskDate("Due date", "When is this task due?", newDue); if (d != null) { newDue = d; bDue.Text = DueButtonText(d); } };
         txtTitle.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { AddTask(); e.SuppressKeyPress = true; } };
     }
     void ShowTask(StudyTask t)
@@ -892,7 +1000,7 @@ class MainForm : Form
         var c = new TaskCard { T = t, Studied = Studied(t.Title), Width = w, Height = 88, Margin = new Padding(0, 0, 0, 10), Selected = t == selTask };
         var bs = Theme.Btn("Start", w - 226, 14, 90, "a"); var bl = Theme.Btn("Log", w - 130, 14, 74, "c"); var bx = Theme.Btn("X", w - 48, 14, 34, "b");
         bs.Height = bl.Height = bx.Height = 30; bs.Anchor = bl.Anchor = bx.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        c.Controls.AddRange(new Control[] { bs, bl, bx });
+        c.Controls.AddRange(new Control[] { bs, bl, bx }); c.ContextMenuStrip = DueMenu(t);
         bs.Click += delegate { selTask = t; StartReading(); };
         bl.Click += delegate { selTask = t; LogTime(t); };
         bx.Click += delegate { if (MessageBox.Show("Delete this task? Logged sessions are kept.", "Delete", MessageBoxButtons.YesNo) == DialogResult.Yes) { tasks.Remove(t); if (selTask == t) selTask = null; Save(); RefreshTasks(); } };
@@ -923,7 +1031,7 @@ class MainForm : Form
     void AddTask()
     {
         var t = txtTitle.Text.Trim(); if (t == "") return;
-        tasks.Add(new StudyTask { Title = t, Target = (int)numTarget.Value }); txtTitle.Text = ""; Save(); RefreshTasks(); FillCombo();
+        tasks.Add(new StudyTask { Title = t, Target = (int)numTarget.Value, Due = newDue }); newDue = ""; bDue.Text = "Due: none"; txtTitle.Text = ""; Save(); RefreshTasks(); FillCombo();
     }
     void AddSession(StudyTask t, int mins, int pages)
     {
@@ -1056,7 +1164,8 @@ class MainForm : Form
         var g = new Panel { Dock = DockStyle.Top, Height = 40 };
         numGoal = new NumericUpDown { Left = 190, Top = 6, Width = 80, Minimum = 5, Maximum = 1440, Value = Math.Min(1440, Math.Max(5, goal)) };
         numGoal.ValueChanged += delegate { goal = (int)numGoal.Value; Save(); RefreshStats(); RefreshStreak(); };
-        g.Controls.AddRange(new Control[] { new Label { Left = 0, Top = 10, Width = 185, Text = "Daily goal (minutes):" }, numGoal }); left.Controls.Add(g);
+        var bWk = Theme.Btn("Weekly summary", 284, 4, 120, "b"); bWk.Height = 32; bWk.Click += delegate { ShowWeekly(); };
+        g.Controls.AddRange(new Control[] { new Label { Left = 0, Top = 10, Width = 185, Text = "Daily goal (minutes):" }, numGoal, bWk }); left.Controls.Add(g);
         lblSummary = new Label { Dock = DockStyle.Top, Height = 36, Font = new Font("Segoe UI", 10, FontStyle.Bold), Tag = "title", TextAlign = ContentAlignment.MiddleLeft }; left.Controls.Add(lblSummary);
         BuildStreak(right);
     }
@@ -1185,7 +1294,7 @@ class MainForm : Form
     void BuildFiles(Control p)
     {
         lvFiles = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false };
-        lvFiles.Columns.Add("File", 340); lvFiles.Columns.Add("Folder", 480); p.Controls.Add(lvFiles);
+        lvFiles.Columns.Add("File", 300); lvFiles.Columns.Add("Progress", 120); lvFiles.Columns.Add("Last opened", 110); lvFiles.Columns.Add("Folder", 300); p.Controls.Add(lvFiles);
         txtSearch = new TextBox { Dock = DockStyle.Top, Font = new Font("Segoe UI", 11.5f) }; p.Controls.Add(txtSearch);
         var top = new Panel { Dock = DockStyle.Top, Height = 46, BackColor = Color.Transparent };
         var bChoose = Theme.Btn("Choose root folder", 0, 6, 160, "c"); var bScan = Theme.Btn("Rescan", 168, 6, 90, "a");
@@ -1202,6 +1311,8 @@ class MainForm : Form
         lvFiles.DoubleClick += delegate { OpenFirst(); }; lvFiles.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OpenFirst(); };
         var menu = new ContextMenuStrip(); menu.Items.Add("Open", null, delegate { OpenFirst(); });
         menu.Items.Add("Show in folder", null, delegate { if (lvFiles.SelectedItems.Count > 0) Process.Start("explorer.exe", "/select,\"" + (string)lvFiles.SelectedItems[0].Tag + "\""); });
+        menu.Items.Add("Set reading progress...", null, delegate { SetProgress(); });
+        menu.Items.Add("Clear progress", null, delegate { if (lvFiles.SelectedItems.Count > 0) { var it = lvFiles.SelectedItems[0]; books.Remove((string)it.Tag); Save(); it.SubItems[1].Text = ""; it.SubItems[2].Text = ""; } });
         lvFiles.ContextMenuStrip = menu;
     }
     void Walk(string dir)
@@ -1215,18 +1326,50 @@ class MainForm : Form
         if (root == "" || !Directory.Exists(root)) { lblRoot.Text = "No root folder selected"; return; }
         Cursor = Cursors.WaitCursor; Walk(root); Cursor = Cursors.Default; lblRoot.Text = root + "  (" + index.Count + " files)"; Search();
     }
+    string ProgText(string p) { BookProg b; return books.TryGetValue(p, out b) && b.Total > 0 ? b.Page + " / " + b.Total + "  (" + Math.Min(100, b.Page * 100 / b.Total) + "%)" : ""; }
+    string OpenedText(string p) { BookProg b; return books.TryGetValue(p, out b) && b.Opened > 0 ? new DateTime(b.Opened, DateTimeKind.Utc).ToLocalTime().ToString("d MMM, HH:mm", CultureInfo.CurrentCulture) : ""; }
     void Search()
     {
         var words = txtSearch.Text.ToLower().Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         lvFiles.BeginUpdate(); lvFiles.Items.Clear(); int n = 0;
-        foreach (var e in index) if (words.All(w => e[0].Contains(w))) { var it = new ListViewItem(new string[] { e[1], Path.GetDirectoryName(e[2]) }); it.Tag = e[2]; lvFiles.Items.Add(it); if (++n >= 300) break; }
+        IEnumerable<string[]> src = index;
+        if (words.Length == 0)   // nothing typed: show what you opened most recently first
+        {
+            var recent = books.Values.OrderByDescending(b => b.Opened).Select(b => b.FilePath).ToList();
+            src = index.Where(e => recent.Contains(e[2])).OrderBy(e => recent.IndexOf(e[2])).Concat(index.Where(e => !recent.Contains(e[2])));
+        }
+        foreach (var e in src)
+            if (words.All(w => e[0].Contains(w)))
+            {
+                var it = new ListViewItem(new string[] { e[1], ProgText(e[2]), OpenedText(e[2]), Path.GetDirectoryName(e[2]) }); it.Tag = e[2];
+                lvFiles.Items.Add(it); if (++n >= 300) break;
+            }
         lvFiles.EndUpdate();
+    }
+    void SetProgress()
+    {
+        if (lvFiles.SelectedItems.Count == 0) { MessageBox.Show("Select a file first."); return; }
+        var it = lvFiles.SelectedItems[0]; string path = (string)it.Tag; BookProg b;
+        if (!books.TryGetValue(path, out b)) b = new BookProg { FilePath = path };
+        using (var f = new AskForm("Reading progress", Path.GetFileName(path), b.Page, b.Total))
+        {
+            if (f.ShowDialog(this) != DialogResult.OK) return;
+            b.Page = f.Minutes; b.Total = Math.Max(f.Pages, f.Minutes); books[path] = b; Save(); it.SubItems[1].Text = ProgText(path);
+        }
+    }
+    void RecordOpen(string path, ListViewItem it)
+    {
+        BookProg b; if (!books.TryGetValue(path, out b)) { b = new BookProg { FilePath = path }; books[path] = b; }
+        b.Opened = DateTime.UtcNow.Ticks; Save();
+        if (it != null) { it.SubItems[1].Text = ProgText(path); it.SubItems[2].Text = OpenedText(path); }
+        lblRoot.Text = b.Total > 0 ? "Opened " + Path.GetFileName(path) + " - resume at page " + b.Page + " of " + b.Total + " (" + Math.Min(100, b.Page * 100 / b.Total) + "%)"
+                                   : "Opened " + Path.GetFileName(path) + " - right-click it to save your page";
     }
     void OpenFirst()
     {
         ListViewItem it = lvFiles.SelectedItems.Count > 0 ? lvFiles.SelectedItems[0] : (lvFiles.Items.Count > 0 ? lvFiles.Items[0] : null);
         if (it == null) return;
-        try { Process.Start(new ProcessStartInfo((string)it.Tag) { UseShellExecute = true }); } catch (Exception ex) { MessageBox.Show(ex.Message); }
+        try { Process.Start(new ProcessStartInfo((string)it.Tag) { UseShellExecute = true }); RecordOpen((string)it.Tag, it); } catch (Exception ex) { MessageBox.Show(ex.Message); }
     }
 
     void ApplyFontPrefs()
@@ -1283,7 +1426,21 @@ class MainForm : Form
         var statsCheck = new CheckBox { Left = 10, Top = 272, Width = 820, Height = 26, Visible = Updater.StatsCode.Length > 0, Checked = statsOptIn,
             Text = "Share an anonymous daily usage count (no personal data)" };
         statsCheck.CheckedChanged += delegate { statsOptIn = statsCheck.Checked; statsAsked = true; Save(); if (statsOptIn) StatsPing(); RefreshUsers(); };
-        int y0 = 310;   // every control in this section is placed relative to this one value, so they can never drift apart
+        var remHead = new Label { Left = 10, Top = 310, Width = 400, Height = 28, Text = "Reminders", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
+        var remDailyCheck = new CheckBox { Left = 10, Top = 346, Width = 230, Height = 26, Text = "Daily study reminder at", Checked = remDaily };
+        var remTimeStep = new Stepper { Left = 244, Top = 341, Width = 150, Clock = true, Step = 15, Value = remHour * 60 + remMinute };   // shows e.g. 18:15
+        var remBreakCheck = new CheckBox { Left = 10, Top = 386, Width = 230, Height = 26, Text = "Break reminder every", Checked = remBreak };
+        var remBreakStep = new Stepper { Left = 244, Top = 381, Width = 130, Min = 15, Max = 180, Step = 5, Suffix = "min", Value = remBreakMin };
+        var remBreakNote = new Label { Left = 384, Top = 390, Width = 380, Height = 22, Tag = "muted", Text = "while a timer is running" };
+        var remTrayCheck = new CheckBox { Left = 10, Top = 426, Width = 820, Height = 26, Text = "Keep Study Tracker running in the tray when I close the window (needed for reminders)", Checked = remTray };
+        Action remSave = delegate
+        {
+            remDaily = remDailyCheck.Checked; remHour = remTimeStep.Value / 60; remMinute = remTimeStep.Value % 60; remBreak = remBreakCheck.Checked;
+            remBreakMin = remBreakStep.Value; remTray = remTrayCheck.Checked; Save(); SyncTray();
+        };
+        remDailyCheck.CheckedChanged += delegate { remSave(); }; remBreakCheck.CheckedChanged += delegate { remSave(); }; remTrayCheck.CheckedChanged += delegate { remSave(); };
+        remTimeStep.Changed += delegate { remSave(); }; remBreakStep.Changed += delegate { remSave(); };
+        int y0 = 470;   // every control in this section is placed relative to this one value, so they can never drift apart
         var updatesHead = new Label { Left = 10, Top = y0, Width = 400, Height = 28, Text = "Software updates", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
         lblVer = new Label { Left = 10, Top = y0 + 34, Width = 700, Height = 26, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold) };
         lblUpdInfo = new Label { Left = 10, Top = y0 + 62, Width = 800, Height = 24, Tag = "muted" };
@@ -1294,7 +1451,7 @@ class MainForm : Form
         rbAuto = new RadioButton { Left = 10, Top = y0 + 180, Width = 820, Height = 26, Text = "Automatic updates", Checked = autoMode };
         rbManual = new RadioButton { Left = 10, Top = y0 + 208, Width = 820, Height = 26, Text = "Notify me; let me install updates", Checked = !autoMode };
         var note = new Label { Left = 10, Top = y0 + 242, Width = 820, Height = 24, Tag = "muted", Text = "Your study data stays on this computer during updates." };
-        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, minimizeCheck, statsCheck, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
+        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, minimizeCheck, statsCheck, remHead, remDailyCheck, remTimeStep, remBreakCheck, remBreakStep, remBreakNote, remTrayCheck, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
         bCheck.Click += delegate { CheckNow(true); };
         bInstall.Click += delegate { InstallUpdate(false); };
         rbAuto.CheckedChanged += delegate { autoMode = rbAuto.Checked; Save(); };
@@ -1320,7 +1477,7 @@ class MainForm : Form
     void StartTimers()
     {
         dotTimer = new Timer { Interval = 500 }; dotTimer.Tick += delegate { blink = !blink; if (updateAvailable) nav[PAGE_SETTINGS].Invalidate(); }; dotTimer.Start();
-        hourTimer = new Timer { Interval = 3600000 }; hourTimer.Tick += delegate { AutoCheck(); }; hourTimer.Start();
+        hourTimer = new Timer { Interval = 3600000 }; hourTimer.Tick += delegate { AutoCheck(); }; hourTimer.Start(); InitReminders();
         // also check immediately when internet (re)connects — still at most once per calendar day
         NetworkChange.NetworkAvailabilityChanged += delegate { Ui(delegate { AutoCheck(); }); };
     }
@@ -1364,6 +1521,85 @@ class MainForm : Form
             Ui(delegate { statsBusy = false; if (installOk) installSent = true; if (ok) lastPing = DateTime.UtcNow; Save(); RefreshUsers(); });
         });
     }
+    // ---------- reminders ----------
+    void InitReminders()
+    {
+        tray = new NotifyIcon { Text = "Study Tracker" };
+        try { tray.Icon = Icon; } catch { }
+        var cm = new ContextMenuStrip();
+        cm.Items.Add("Open Study Tracker", null, delegate { ShowFromTray(); });
+        cm.Items.Add("Exit", null, delegate { exiting = true; tray.Visible = false; Application.Exit(); });
+        tray.ContextMenuStrip = cm; tray.DoubleClick += delegate { ShowFromTray(); }; tray.BalloonTipClicked += delegate { ShowFromTray(); };
+        remTimer = new Timer { Interval = 30000 }; remTimer.Tick += delegate { ReminderTick(); }; remTimer.Start();
+        FormClosing += delegate(object sender, FormClosingEventArgs e)
+        {
+            if (!exiting && remTray && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true; Hide(); SyncTray();
+                if (!trayHinted) { trayHinted = true; tray.ShowBalloonTip(3000, "Study Tracker", "Still running here so your reminders keep working.", ToolTipIcon.Info); }
+            }
+        };
+        FormClosed += delegate { try { tray.Visible = false; tray.Dispose(); } catch { } };
+        SyncTray();
+    }
+    void SyncTray() { if (tray != null && tray.Icon != null) tray.Visible = remDaily || remBreak || remTray; }
+    void ShowFromTray() { Show(); WindowState = FormWindowState.Normal; Activate(); }
+    void Notify(string title, string text)
+    {
+        if (tray == null || tray.Icon == null) return;
+        tray.Visible = true; tray.ShowBalloonTip(8000, title, text, ToolTipIcon.Info);
+        if (!muted) Sound.Chime();
+    }
+    void ReminderTick()
+    {
+        DateTime now = DateTime.Now; string today = Key(now); DateTime at = now.Date.AddHours(remHour).AddMinutes(remMinute);
+        if (remDaily && lastDaily != today && now >= at && now < at.AddHours(3))   // fires once a day, up to 3 h after the chosen time
+        {
+            lastDaily = today; Save(); int todo = tasks.Count(x => !x.Done);
+            Notify("Time to study" + (string.IsNullOrEmpty(userName) ? "" : ", " + userName) + "!",
+                todo > 0 ? "You have " + todo + " task(s) to do. A short session now keeps your streak going." : "Add a topic and start a focus session to keep your streak going.");
+        }
+        bool timing = (mini != null && !mini.IsDisposed) || frunning;
+        if (remBreak && timing) { breakAcc += 0.5; if (breakAcc >= remBreakMin) { breakAcc = 0; Notify("Take a short break", "You have been studying for a while. Stretch, drink some water and rest your eyes."); } }
+        else breakAcc = 0;
+    }
+
+    // ---------- weekly summary ----------
+    static string Hm(int m) { return m >= 60 ? (m / 60) + " h " + (m % 60) + " min" : m + " min"; }
+    IEnumerable<Sess> Between(int fromAgo, int toAgo)   // sessions from N..M days ago (0 = today)
+    {
+        foreach (var x in sessions)
+        {
+            DateTime d; if (!DateTime.TryParseExact(x.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d)) continue;
+            int ago = (int)(DateTime.Today - d.Date).TotalDays; if (ago >= fromAgo && ago <= toAgo) yield return x;
+        }
+    }
+    void MaybeWeekly()   // once per calendar week, the first time the app is opened and there is something to report
+    {
+        DateTime mon = DateTime.Today.AddDays(-(((int)DateTime.Today.DayOfWeek + 6) % 7)); string key = Key(mon);
+        if (lastSummary == key) return;
+        if (Between(0, 13).Sum(x => x.Minutes) == 0) return;
+        lastSummary = key; Save(); ShowWeekly();
+    }
+    void ShowWeekly()
+    {
+        var week = Between(0, 6).ToList(); int tw = week.Sum(x => x.Minutes), lw = Between(7, 13).Sum(x => x.Minutes);
+        var rows = new List<string[]>();
+        string delta = tw == lw ? "same as last week" : (tw > lw ? "+" : "-") + Hm(Math.Abs(tw - lw)) + " vs last week";
+        rows.Add(new string[] { "Studied in the last 7 days", Hm(tw) + "   (" + delta + ")" });
+        var days = week.GroupBy(x => x.Date).Select(g => new { D = g.Key, M = g.Sum(x => x.Minutes) }).ToList();
+        rows.Add(new string[] { "Days studied", days.Count(x => x.M > 0) + " of 7   |   daily goal reached on " + days.Count(x => x.M >= goal) });
+        var best = days.OrderByDescending(x => x.M).FirstOrDefault(); DateTime bd;
+        rows.Add(new string[] { "Best day", best == null ? "-" : (DateTime.TryParseExact(best.D, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out bd) ? bd.ToString("dddd d MMM", CultureInfo.CurrentCulture) : best.D) + "  -  " + Hm(best.M) });
+        var top = week.GroupBy(x => x.Subject).Select(g => new { S = g.Key, M = g.Sum(x => x.Minutes) }).OrderByDescending(x => x.M).FirstOrDefault();
+        rows.Add(new string[] { "Most-studied subject", top == null ? "-" : top.S + "  -  " + Hm(top.M) });
+        var open = tasks.Where(x => !x.Done).Select(x => new { T = x, M = week.Where(w => w.Subject == x.Title).Sum(w => w.Minutes) }).OrderBy(x => x.M).ThenBy(x => x.T.DaysLeft).FirstOrDefault();
+        rows.Add(new string[] { "Needs attention", open == null ? "No open tasks" : open.T.Title + "  -  " + Hm(open.M) + " this week" });
+        int c, bst; Streaks(out c, out bst); int over = tasks.Count(x => !x.Done && x.DaysLeft < 0);
+        rows.Add(new string[] { "Streak", c + " day(s)   (best " + bst + ")" + (over > 0 ? "   |   " + over + " overdue task(s)" : "") });
+        using (var f = new InfoForm("Your week in review", DateTime.Today.AddDays(-6).ToString("d MMM", CultureInfo.CurrentCulture) + " - " + DateTime.Today.ToString("d MMM yyyy", CultureInfo.CurrentCulture), rows)) f.ShowDialog(this);
+    }
+
     void AutoCheck()
     {
         StatsPing();
