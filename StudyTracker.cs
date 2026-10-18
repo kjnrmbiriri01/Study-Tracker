@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -85,6 +85,10 @@ static class Theme
         Accent = ColorTranslator.FromHtml(pals[Pal][0]); Accent2 = ColorTranslator.FromHtml(pals[Pal][1]); Accent3 = ColorTranslator.FromHtml(pals[Pal][2]);
     }
     public static Color Mix(Color a, Color b, double t) { return Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t)); }
+    public static void FooterFix(Form f)   // dialogs: footer strip stays at the back, buttons on top
+    {
+        foreach (Control c in f.Controls.Cast<Control>().ToList()) if (c is Button) c.BringToFront();
+    }
     public static Color BackBehind(Control c)
     {
         for (Control p = c.Parent; p != null; p = p.Parent) { if (p is global::Card) return Card; if (p.BackColor.A == 255) return p.BackColor; }
@@ -203,7 +207,7 @@ static class Icons   // simple vector icons drawn in the text colour (no icon fo
 
 class PillButton : Button   // compact Windows-style button with crisp edges, subtle border, hover / pressed states and optional icon
 {
-    public string Icon; public Action<Graphics> Overlay; public bool LeftAlign; public Color Edge = Color.Empty; bool hover, down;
+    public string Icon; public Action<Graphics> Overlay; public Color Edge = Color.Empty; bool hover, down;
     public PillButton()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
@@ -226,30 +230,25 @@ class PillButton : Button   // compact Windows-style button with crisp edges, su
         if (!Enabled) fill = Theme.Mix(fill, Theme.Bg, 0.55);
         else if (down) fill = FlatAppearance.MouseDownBackColor.IsEmpty ? Theme.Mix(fill, Color.Black, 0.16) : FlatAppearance.MouseDownBackColor;
         else if (hover) fill = FlatAppearance.MouseOverBackColor.IsEmpty ? Theme.Mix(fill, Theme.Dark ? Color.White : Color.Black, Theme.Dark ? 0.12 : 0.07) : FlatAppearance.MouseOverBackColor;
-        // Match modern Windows dialog buttons: small corner radius, crisp 1px border,
-        // no glossy gradient. Inset geometry avoids clipped/blurred pixels at small sizes.
-        var r = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
-        int radius = Math.Min(5, Math.Max(2, Math.Min(Width, Height) / 5));
-        using (var gp = Theme.Round(r, radius))
+        // Smooth Windows-style button: antialiased rounded corners, no black outline,
+        // and geometry inset by half a pixel so the 1px edge is not clipped at DPI scaling.
+        var r = new RectangleF(0.5f, 0.5f, Math.Max(1f, Width - 1.5f), Math.Max(1f, Height - 1.5f));
+        int radius = Math.Min(6, Math.Max(3, Math.Min(Width, Height) / 6));
+        using (var gp = Theme.Round(Rectangle.Round(r), radius))
         {
             using (var br = new SolidBrush(fill)) g.FillPath(br, gp);
             Color border = Edge.IsEmpty
-                ? (Theme.Dark ? Theme.Mix(fill, Color.White, down ? 0.28 : hover ? 0.22 : 0.13)
-                              : Theme.Mix(fill, Color.Black, down ? 0.22 : hover ? 0.16 : 0.11))
+                ? (Theme.Dark ? Theme.Mix(fill, Theme.Card, down ? 0.22f : hover ? 0.15f : 0.08f)
+                              : Theme.Mix(fill, Theme.Bg, down ? 0.16f : hover ? 0.10f : 0.045f))
                 : Edge;
-            using (var pen = new Pen(border, 1f) { Alignment = PenAlignment.Inset }) g.DrawPath(pen, gp);
-            if (down)
-            {
-                using (var inner = Theme.Round(Rectangle.Inflate(r, -2, -2), Math.Max(2, radius - 2)))
-                using (var pen = new Pen(Theme.Mix(border, fill, 0.45f), 1f)) g.DrawPath(pen, inner);
-            }
+            using (var pen = new Pen(border, 0.8f) { Alignment = PenAlignment.Center }) g.DrawPath(pen, gp);
         }
         Color fg = Enabled ? ForeColor : Theme.Muted; int ic = string.IsNullOrEmpty(Icon) ? 0 : 16, gap = ic > 0 ? 7 : 0;
         int tw = TextRenderer.MeasureText(g, Text, Font, new Size(Width, Height), TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine).Width;
-        int x0 = LeftAlign ? 14 : Math.Max(6, (Width - (ic + gap + tw)) / 2);
+        int x0 = Math.Max(6, (Width - (ic + gap + tw)) / 2);
         if (ic > 0) Icons.Draw(g, Icon, x0, (Height - ic) / 2, ic, fg);
         TextRenderer.DrawText(g, Text, Font, new Rectangle(x0 + ic + gap, 0, Math.Max(10, Width - x0 - ic - gap - 4), Height), fg, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-        if (Focused && ShowFocusCues) using (var gp = Theme.Round(Rectangle.Inflate(r, -2, -2), 4)) using (var pen = new Pen(Theme.Accent, 1f)) g.DrawPath(pen, gp);
+        if (Focused && ShowFocusCues) using (var gp = Theme.Round(Rectangle.Round(RectangleF.Inflate(r, -2f, -2f)), 4)) using (var pen = new Pen(Theme.Accent, 1f)) g.DrawPath(pen, gp);
         if (Overlay != null) Overlay(g);
     }
 }
@@ -444,7 +443,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "6.6";
+    public const string Version = "6.9";
     // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
     // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
     public static string StatsCode = "3mkayderado";
@@ -733,11 +732,11 @@ class AskForm : Form
         Controls.Add(new Label { Left = 24, Top = 16, Width = 392, Height = 28, Text = title, Font = new Font("Segoe UI Semibold", 13), AutoEllipsis = true });
         Controls.Add(new Label { Left = 25, Top = 46, Width = 392, Height = 20, Text = sub, Tag = "muted", AutoEllipsis = true });
     }
-    void Buttons(int h)
+    void Buttons(int h, string okText = "Save")
     {
-        var ok = Theme.Btn("Save", 24, h - 50, 100, "a"); ok.Height = 32; ok.DialogResult = DialogResult.OK;
+        var ok = Theme.Btn(okText, 24, h - 50, 100, "a"); ok.Height = 32; ok.DialogResult = DialogResult.OK;
         var no = Theme.Btn("Cancel", 132, h - 50, 100, "c"); no.Height = 32; no.DialogResult = DialogResult.Cancel;
-        Controls.Add(ok); Controls.Add(no); AcceptButton = ok; CancelButton = no; Theme.Skin(this); Theme.ApplyUserFont(this, true);
+        Controls.Add(ok); Controls.Add(no); AcceptButton = ok; CancelButton = no; Theme.Skin(this); Theme.ApplyUserFont(this, true); Theme.FooterFix(this);
     }
     public AskForm(string title, string label, string def)   // text answer
     {
@@ -787,7 +786,7 @@ class AskForm : Form
             Controls.Add(new Label { Left = 24, Top = 208, Width = 392, Height = 22, Text = "Pages read (optional)", Tag = "muted" });
             sp = new Stepper { Left = 24, Top = 234, Width = 200, Min = 0, Max = 5000, Step = 1, Suffix = "pages", Value = 0 }; Controls.Add(sp);
         }
-        Buttons(h);
+        Buttons(h, pages ? "Save" : "Start");
     }
 }
 
@@ -869,7 +868,7 @@ class SlotForm : Form
         var no = Theme.Btn("Cancel", 132, h - 50, 100, "c"); no.Height = 32; no.DialogResult = DialogResult.Cancel;
         Controls.Add(ok); Controls.Add(no); AcceptButton = ok; CancelButton = no;
         if (exists) { var del = Theme.Btn("Delete", 240, h - 50, 100, "b"); del.Height = 32; del.Click += delegate { Deleted = true; DialogResult = DialogResult.OK; Close(); }; Controls.Add(del); }
-        Theme.Skin(this); Theme.ApplyUserFont(this, true);
+        Theme.Skin(this); Theme.ApplyUserFont(this, true); Theme.FooterFix(this);
     }
 }
 
@@ -893,7 +892,7 @@ class InfoForm : Form
         }
         Controls.Add(card);
         var ok = Theme.Btn("Close", 24, h - 50, 100, "a"); ok.Height = 32; ok.DialogResult = DialogResult.OK; Controls.Add(ok); AcceptButton = ok; CancelButton = ok;
-        Theme.Skin(this); Theme.ApplyUserFont(this, true);
+        Theme.Skin(this); Theme.ApplyUserFont(this, true); Theme.FooterFix(this);
     }
 }
 
@@ -1605,6 +1604,7 @@ class MainForm : Form
             List<string[]> found = WalkFiles(scanRoot);
             try
             {
+                for (int wait = 0; wait < 100 && !IsHandleCreated && !IsDisposed; wait++) System.Threading.Thread.Sleep(50);   // up to 5 s for the window to open
                 if (IsDisposed || !IsHandleCreated) return;
                 BeginInvoke((Action)delegate
                 {
@@ -1738,10 +1738,10 @@ class MainForm : Form
         lblVer = new Label { Left = 10, Top = y0 + 34, Width = 700, Height = 26, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold) };
         lblUpdInfo = new Label { Left = 10, Top = y0 + 62, Width = 800, Height = 24, Tag = "muted" };
         lblUpdStatus = new Label { Left = 10, Top = y0 + 90, Width = 820, Height = 28, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "white" };
-        bCheck = Theme.Btn("Check for updates", 10, y0 + 126, 180, "a"); bCheck.Height = 38; ((PillButton)bCheck).Icon = "refresh";
-        bInstall = Theme.Btn("Install update now", 200, y0 + 126, 190, "c"); bInstall.Height = 38; ((PillButton)bInstall).Icon = "download"; bInstall.Visible = false;   // same row, same height, right next to Check
-        prog = new ProgressBar { Left = 404, Top = y0 + 139, Width = 260, Height = 12, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
-        var updRow = new FlowLayoutPanel { Left = 10, Top = y0 + 126, Width = 840, Height = 40, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };   // both buttons live in one row, so they always line up
+        bCheck = Theme.Btn("Check for updates", 10, y0 + 126, 190, "a"); bCheck.Height = 38; ((PillButton)bCheck).Icon = "refresh";
+        bInstall = Theme.Btn("Install update now", 210, y0 + 126, 190, "c"); bInstall.Height = 38; ((PillButton)bInstall).Icon = "download"; bInstall.Visible = false;
+        prog = new ProgressBar { Left = 414, Top = y0 + 139, Width = 260, Height = 12, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
+        var updRow = new FlowLayoutPanel { Left = 10, Top = y0 + 126, Width = 840, Height = 40, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = Padding.Empty, Padding = Padding.Empty };
         bCheck.Width = 190; bInstall.Width = 190; bCheck.Height = 38; bInstall.Height = 38;
         bCheck.Margin = new Padding(0, 0, 10, 0); bInstall.Margin = new Padding(0, 0, 16, 0); prog.Margin = new Padding(0, 13, 0, 0); prog.Width = 260; prog.Height = 12;
         updRow.Controls.Add(bCheck); updRow.Controls.Add(bInstall); updRow.Controls.Add(prog);
