@@ -133,7 +133,7 @@ static class Theme
                     var b = (Button)k;   // a = main action, b = soft accent (secondary / destructive), c = neutral
                     if (tag == "a") { b.BackColor = Accent; b.ForeColor = Color.White; }
                     else if (tag == "b") { b.BackColor = Mix(Card, Accent2, 0.22); b.ForeColor = Text; }
-                    else { b.BackColor = Mix(Card, Text, Dark ? 0.09 : 0.03); b.ForeColor = Text; }
+                    else { b.BackColor = Mix(Card, Text, Dark ? 0.10 : 0.07); b.ForeColor = Text; }
                     var pb2 = b as PillButton; if (pb2 != null) pb2.Edge = tag == "b" ? Accent2 : Color.Empty;
                 }
             }
@@ -230,25 +230,16 @@ class PillButton : Button   // compact Windows-style button with crisp edges, su
         if (!Enabled) fill = Theme.Mix(fill, Theme.Bg, 0.55);
         else if (down) fill = FlatAppearance.MouseDownBackColor.IsEmpty ? Theme.Mix(fill, Color.Black, 0.16) : FlatAppearance.MouseDownBackColor;
         else if (hover) fill = FlatAppearance.MouseOverBackColor.IsEmpty ? Theme.Mix(fill, Theme.Dark ? Color.White : Color.Black, Theme.Dark ? 0.12 : 0.07) : FlatAppearance.MouseOverBackColor;
-        // Smooth Windows-style button: antialiased rounded corners, no black outline,
-        // and geometry inset by half a pixel so the 1px edge is not clipped at DPI scaling.
-        var r = new RectangleF(0.5f, 0.5f, Math.Max(1f, Width - 1.5f), Math.Max(1f, Height - 1.5f));
-        int radius = Math.Min(6, Math.Max(3, Math.Min(Width, Height) / 6));
-        using (var gp = Theme.Round(Rectangle.Round(r), radius))
-        {
-            using (var br = new SolidBrush(fill)) g.FillPath(br, gp);
-            Color border = Edge.IsEmpty
-                ? (Theme.Dark ? Theme.Mix(fill, Theme.Card, down ? 0.22f : hover ? 0.15f : 0.08f)
-                              : Theme.Mix(fill, Theme.Bg, down ? 0.16f : hover ? 0.10f : 0.045f))
-                : Edge;
-            using (var pen = new Pen(border, 0.8f) { Alignment = PenAlignment.Center }) g.DrawPath(pen, gp);
-        }
+        // Flat button like version 6.1: one solid fill with softly rounded corners, no outline of any colour.
+        // The fill covers the whole control, so there is no uncovered strip at the right or bottom edge.
+        var r = new Rectangle(0, 0, Width, Height);
+        using (var gp = Theme.Round(r, Math.Max(2, Math.Min(8, Math.Min(Width, Height) / 3)))) using (var br = new SolidBrush(fill)) g.FillPath(br, gp);
         Color fg = Enabled ? ForeColor : Theme.Muted; int ic = string.IsNullOrEmpty(Icon) ? 0 : 16, gap = ic > 0 ? 7 : 0;
         int tw = TextRenderer.MeasureText(g, Text, Font, new Size(Width, Height), TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine).Width;
         int x0 = Math.Max(6, (Width - (ic + gap + tw)) / 2);
         if (ic > 0) Icons.Draw(g, Icon, x0, (Height - ic) / 2, ic, fg);
         TextRenderer.DrawText(g, Text, Font, new Rectangle(x0 + ic + gap, 0, Math.Max(10, Width - x0 - ic - gap - 4), Height), fg, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-        if (Focused && ShowFocusCues) using (var gp = Theme.Round(Rectangle.Round(RectangleF.Inflate(r, -2f, -2f)), 4)) using (var pen = new Pen(Theme.Accent, 1f)) g.DrawPath(pen, gp);
+        if (Focused && ShowFocusCues) using (var gp = Theme.Round(Rectangle.Inflate(new Rectangle(0, 0, Width - 1, Height - 1), -2, -2), 6)) using (var pen = new Pen(Theme.Accent, 1f)) g.DrawPath(pen, gp);
         if (Overlay != null) Overlay(g);
     }
 }
@@ -443,7 +434,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "6.9";
+    public const string Version = "6.10";
     // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
     // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
     public static string StatsCode = "3mkayderado";
