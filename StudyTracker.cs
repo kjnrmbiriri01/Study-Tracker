@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -26,6 +26,7 @@ class StudyTask
     public string DueText { get { var d = DueDate; if (!d.HasValue) return ""; int n = DaysLeft; return n < 0 ? "Overdue by " + (-n) + " day(s)" : n == 0 ? "Due today" : n == 1 ? "Due tomorrow" : "Due in " + n + " days"; } }
 }
 class BookProg { public string FilePath; public int Page, Total; public long Opened; }
+class Slot { public int Day, Minutes; public string Time = "18:00", Subject = ""; }   // Day: 0 = Monday ... 6 = Sunday
 class Sess { public string Date, Subject; public int Minutes, Pages; }
 
 static class App
@@ -83,9 +84,32 @@ static class Theme
         Border = ColorTranslator.FromHtml(dark ? "#25555e" : "#c9e2df");
         Accent = ColorTranslator.FromHtml(pals[Pal][0]); Accent2 = ColorTranslator.FromHtml(pals[Pal][1]); Accent3 = ColorTranslator.FromHtml(pals[Pal][2]);
     }
+    public static Color Mix(Color a, Color b, double t) { return Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t)); }
+    public static Color BackBehind(Control c)
+    {
+        for (Control p = c.Parent; p != null; p = p.Parent) { if (p is global::Card) return Card; if (p.BackColor.A == 255) return p.BackColor; }
+        return Bg;
+    }
+    static MethodInfo ipb = typeof(Control).GetMethod("InvokePaintBackground", BindingFlags.NonPublic | BindingFlags.Instance), ip = typeof(Control).GetMethod("InvokePaint", BindingFlags.NonPublic | BindingFlags.Instance);
+    public static void PaintParent(Control c, PaintEventArgs e)   // lets rounded controls show whatever is behind them (cards, gradients)
+    {
+        if (c.Parent == null || ipb == null) { e.Graphics.Clear(Bg); return; }
+        var g = e.Graphics; var st = g.Save(); g.TranslateTransform(-c.Left, -c.Top);
+        var pe = new PaintEventArgs(g, new Rectangle(0, 0, c.Parent.Width, c.Parent.Height));
+        try { ipb.Invoke(c, new object[] { c.Parent, pe }); if (ip != null) ip.Invoke(c, new object[] { c.Parent, pe }); } catch { g.Restore(st); g.Clear(Bg); return; }
+        g.Restore(st);
+    }
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(IntPtr h, string app, string ids);
+    public static void Modern(Control k)   // thin, theme-aware scrollbars and dropdowns (Windows 10/11)
+    {
+        if (!Dark && (k is ComboBox || k is TextBox)) return;
+        string name = (k is ComboBox || k is TextBox) ? "DarkMode_CFD" : (Dark ? "DarkMode_Explorer" : "Explorer");
+        Action go = delegate { try { SetWindowTheme(k.Handle, name, null); } catch { } };
+        if (k.IsHandleCreated) go(); else k.HandleCreated += delegate { go(); };
+    }
     public static Button Btn(string text, int x, int y, int w, string role)
     {
-        var b = new Button { Text = text, Left = x, Top = y, Width = w, Height = 32, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand, Tag = role, Font = new Font("Segoe UI", 8.5f, FontStyle.Bold) };
+        var b = new PillButton { Text = text, Left = x, Top = y, Width = w, Height = 32, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand, Tag = role, Font = new Font("Segoe UI", 9f) };
         b.FlatAppearance.BorderSize = 0; return b;
     }
     public static GraphicsPath Round(Rectangle r, int d)
@@ -98,10 +122,20 @@ static class Theme
         foreach (Control k in c.Controls)
         {
             string tag = k.Tag as string;
-            if (k is Button) { if (tag != "nav") { var b = (Button)k; b.BackColor = tag == "b" ? Accent2 : tag == "c" ? Accent3 : Accent; b.ForeColor = tag == "c" ? Base : Color.White; } }
+            if (k is Button)
+            {
+                if (tag != "nav")
+                {
+                    var b = (Button)k;   // a = main action, b = soft accent (secondary / destructive), c = neutral
+                    if (tag == "a") { b.BackColor = Accent; b.ForeColor = Color.White; }
+                    else if (tag == "b") { b.BackColor = Mix(Card, Accent2, 0.22); b.ForeColor = Text; }
+                    else { b.BackColor = Mix(Card, Text, Dark ? 0.09 : 0.03); b.ForeColor = Text; }
+                    var pb2 = b as PillButton; if (pb2 != null) pb2.Edge = tag == "b" ? Accent2 : Color.Empty;
+                }
+            }
             else if (k is LinkLabel) { var l = (LinkLabel)k; l.LinkColor = Accent; l.ActiveLinkColor = Accent2; l.BackColor = Color.Transparent; }
             else if (k is Label) { k.BackColor = Color.Transparent; if (tag != "white") k.ForeColor = tag == "muted" ? Muted : tag == "title" ? Accent : tag == "sub" ? Accent2 : Text; }
-            else if (k is CheckBox || k is RadioButton) { k.ForeColor = Text; k.BackColor = Color.Transparent; }
+            else if (k is CheckBox || k is RadioButton) { k.ForeColor = Text; if (!(k is SwitchBox) && !(k is RadioBox)) k.BackColor = Color.Transparent; }
             else if (k is TextBox) { k.BackColor = Card; k.ForeColor = Text; ((TextBox)k).BorderStyle = tag == "flat" ? BorderStyle.None : BorderStyle.FixedSingle; }
             else if (k is NumericUpDown) { k.BackColor = Card; k.ForeColor = Text; }
             else if (k is ComboBox) { var cb = (ComboBox)k; cb.BackColor = Card; cb.ForeColor = Text; cb.FlatStyle = FlatStyle.Flat; }
@@ -111,6 +145,7 @@ static class Theme
             {
                 if (tag == "banner") { } else if (tag == "line") k.BackColor = Accent; else if (tag == "card") k.BackColor = Card; else k.BackColor = Bg;
             }
+            if (k is ListView || k is ListBox || k is ComboBox || k is TextBox || k is FlowLayoutPanel || (k is Panel && ((Panel)k).AutoScroll)) Modern(k);
             if (k.Controls.Count > 0) Skin(k);
         }
     }
@@ -134,6 +169,136 @@ static class Theme
 }
 
 // ===== Rounded, bordered card panel (site-style) =====
+// ===== Windows 11 style controls =====
+static class Icons   // simple vector icons drawn in the text colour (no icon font needed)
+{
+    public static void Draw(Graphics g, string kind, int x, int y, int s, Color c)
+    {
+        var old = g.SmoothingMode; g.SmoothingMode = SmoothingMode.AntiAlias; float u = s / 16f;
+        Func<float, float, PointF> P = (px, py) => new PointF(x + px * u, y + py * u);
+        using (var pen = new Pen(c, Math.Max(1.3f, 1.5f * u)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+        using (var br = new SolidBrush(c))
+        {
+            switch (kind)
+            {
+                case "home": g.DrawLines(pen, new[] { P(1.5f, 8), P(8, 2), P(14.5f, 8) }); g.DrawLines(pen, new[] { P(3.5f, 7), P(3.5f, 14), P(12.5f, 14), P(12.5f, 7) }); break;
+                case "list": for (int i = 0; i < 3; i++) { float yy = 3 + i * 5; g.FillEllipse(br, x + 1.5f * u, y + (yy - 1) * u, 2 * u, 2 * u); g.DrawLine(pen, P(6, yy), P(14.5f, yy)); } break;
+                case "timer": g.DrawEllipse(pen, x + 2 * u, y + 3 * u, 12 * u, 12 * u); g.DrawLine(pen, P(8, 9), P(8, 5.5f)); g.DrawLine(pen, P(8, 9), P(10.5f, 10.5f)); g.DrawLine(pen, P(6, 1), P(10, 1)); break;
+                case "chart": g.DrawLine(pen, P(3, 14), P(3, 9)); g.DrawLine(pen, P(8, 14), P(8, 3)); g.DrawLine(pen, P(13, 14), P(13, 6)); break;
+                case "folder": g.DrawLines(pen, new[] { P(1.5f, 4), P(6, 4), P(7.5f, 5.5f), P(14.5f, 5.5f), P(14.5f, 13), P(1.5f, 13), P(1.5f, 4) }); break;
+                case "gear":
+                    g.DrawEllipse(pen, x + 5 * u, y + 5 * u, 6 * u, 6 * u);
+                    for (int i = 0; i < 8; i++) { double a = i * Math.PI / 4; float ca = (float)Math.Cos(a), sa = (float)Math.Sin(a); g.DrawLine(pen, P(8 + ca * 5, 8 + sa * 5), P(8 + ca * 7, 8 + sa * 7)); }
+                    break;
+                case "info": g.DrawEllipse(pen, x + 1.5f * u, y + 1.5f * u, 13 * u, 13 * u); g.DrawLine(pen, P(8, 7), P(8, 11.5f)); g.FillEllipse(br, x + 7 * u, y + 4 * u, 2 * u, 2 * u); break;
+                case "plus": g.DrawLine(pen, P(8, 3), P(8, 13)); g.DrawLine(pen, P(3, 8), P(13, 8)); break;
+                case "calendar": g.DrawRectangle(pen, x + 2 * u, y + 3 * u, 12 * u, 11 * u); g.DrawLine(pen, P(2, 6.5f), P(14, 6.5f)); g.DrawLine(pen, P(5.5f, 1.5f), P(5.5f, 4.5f)); g.DrawLine(pen, P(10.5f, 1.5f), P(10.5f, 4.5f)); break;
+                case "refresh": g.DrawArc(pen, x + 2.5f * u, y + 2.5f * u, 11 * u, 11 * u, 20, 290); g.DrawLines(pen, new[] { P(13.5f, 1.5f), P(13.5f, 5), P(10, 5) }); break;
+                case "download": g.DrawLine(pen, P(8, 2), P(8, 10)); g.DrawLines(pen, new[] { P(4.5f, 7), P(8, 10.5f), P(11.5f, 7) }); g.DrawLine(pen, P(3, 14), P(13, 14)); break;
+            }
+        }
+        g.SmoothingMode = old;
+    }
+}
+
+class PillButton : Button   // compact Windows-style button with crisp edges, subtle border, hover / pressed states and optional icon
+{
+    public string Icon; public Action<Graphics> Overlay; public bool LeftAlign; public Color Edge = Color.Empty; bool hover, down;
+    public PillButton()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; Cursor = Cursors.Hand;
+    }
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; down = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnMouseDown(MouseEventArgs e) { down = true; Invalidate(); base.OnMouseDown(e); }
+    protected override void OnMouseUp(MouseEventArgs e) { down = false; Invalidate(); base.OnMouseUp(e); }
+    protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        var host = Parent as Panel;
+        if (host != null && (host.Tag as string) == "banner") Theme.PaintParent(this, e);   // gradient banner: show the gradient behind the corners
+        else e.Graphics.Clear(Theme.BackBehind(this));                                       // everywhere else: the solid colour behind (page, card or window)
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; Color fill = BackColor;
+        if (!Enabled) fill = Theme.Mix(fill, Theme.Bg, 0.55);
+        else if (down) fill = FlatAppearance.MouseDownBackColor.IsEmpty ? Theme.Mix(fill, Color.Black, 0.16) : FlatAppearance.MouseDownBackColor;
+        else if (hover) fill = FlatAppearance.MouseOverBackColor.IsEmpty ? Theme.Mix(fill, Theme.Dark ? Color.White : Color.Black, Theme.Dark ? 0.12 : 0.07) : FlatAppearance.MouseOverBackColor;
+        // Match modern Windows dialog buttons: small corner radius, crisp 1px border,
+        // no glossy gradient. Inset geometry avoids clipped/blurred pixels at small sizes.
+        var r = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
+        int radius = Math.Min(5, Math.Max(2, Math.Min(Width, Height) / 5));
+        using (var gp = Theme.Round(r, radius))
+        {
+            using (var br = new SolidBrush(fill)) g.FillPath(br, gp);
+            Color border = Edge.IsEmpty
+                ? (Theme.Dark ? Theme.Mix(fill, Color.White, down ? 0.28 : hover ? 0.22 : 0.13)
+                              : Theme.Mix(fill, Color.Black, down ? 0.22 : hover ? 0.16 : 0.11))
+                : Edge;
+            using (var pen = new Pen(border, 1f) { Alignment = PenAlignment.Inset }) g.DrawPath(pen, gp);
+            if (down)
+            {
+                using (var inner = Theme.Round(Rectangle.Inflate(r, -2, -2), Math.Max(2, radius - 2)))
+                using (var pen = new Pen(Theme.Mix(border, fill, 0.45f), 1f)) g.DrawPath(pen, inner);
+            }
+        }
+        Color fg = Enabled ? ForeColor : Theme.Muted; int ic = string.IsNullOrEmpty(Icon) ? 0 : 16, gap = ic > 0 ? 7 : 0;
+        int tw = TextRenderer.MeasureText(g, Text, Font, new Size(Width, Height), TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine).Width;
+        int x0 = LeftAlign ? 14 : Math.Max(6, (Width - (ic + gap + tw)) / 2);
+        if (ic > 0) Icons.Draw(g, Icon, x0, (Height - ic) / 2, ic, fg);
+        TextRenderer.DrawText(g, Text, Font, new Rectangle(x0 + ic + gap, 0, Math.Max(10, Width - x0 - ic - gap - 4), Height), fg, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+        if (Focused && ShowFocusCues) using (var gp = Theme.Round(Rectangle.Inflate(r, -2, -2), 4)) using (var pen = new Pen(Theme.Accent, 1f)) g.DrawPath(pen, gp);
+        if (Overlay != null) Overlay(g);
+    }
+}
+
+class SwitchBox : CheckBox   // Windows 11 check box: rounded square with a tick
+{
+    public SwitchBox() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true); Cursor = Cursors.Hand; }
+    protected override void OnPaintBackground(PaintEventArgs e) { }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics; g.Clear(Theme.BackBehind(this)); g.SmoothingMode = SmoothingMode.AntiAlias; int d = 20, y = (Height - d) / 2; var box = new Rectangle(1, y, d - 1, d - 1);
+        using (var gp = Theme.Round(box, 8))
+        {
+            if (Checked) { using (var br = new SolidBrush(Theme.Accent)) g.FillPath(br, gp); }
+            else using (var pen = new Pen(Theme.Muted, 1.2f)) g.DrawPath(pen, gp);
+        }
+        if (Checked) using (var pen = new Pen(Color.White, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            g.DrawLines(pen, new PointF[] { new PointF(5.5f, y + 10f), new PointF(8.5f, y + 13f), new PointF(14.5f, y + 6.5f) });
+        TextRenderer.DrawText(g, Text, Font, new Rectangle(d + 10, 0, Math.Max(10, Width - d - 10), Height), Enabled ? ForeColor : Theme.Muted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+    }
+}
+
+class RadioBox : RadioButton   // Windows 11 radio button
+{
+    public RadioBox() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true); Cursor = Cursors.Hand; }
+    protected override void OnPaintBackground(PaintEventArgs e) { }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics; g.Clear(Theme.BackBehind(this)); g.SmoothingMode = SmoothingMode.AntiAlias; int d = 18, y = (Height - d) / 2;
+        using (var pen = new Pen(Checked ? Theme.Accent : Theme.Muted, 1.5f)) g.DrawEllipse(pen, 1, y, d, d);
+        if (Checked) using (var br = new SolidBrush(Theme.Accent)) g.FillEllipse(br, 6, y + 5, 8, 8);
+        TextRenderer.DrawText(g, Text, Font, new Rectangle(d + 12, 0, Math.Max(10, Width - d - 12), Height), Enabled ? ForeColor : Theme.Muted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+    }
+}
+
+class RoundBar : Control   // thin rounded progress bar
+{
+    int val; public int Value { get { return val; } set { val = Math.Max(0, Math.Min(100, value)); Invalidate(); } }
+    public RoundBar() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true); }
+    protected override void OnPaintBackground(PaintEventArgs e) { e.Graphics.Clear(Theme.BackBehind(this)); }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; int h = Math.Min(Math.Max(6, Height - 8), 12);
+        var tr = new Rectangle(0, (Height - h) / 2, Width - 1, h);
+        using (var gp = Theme.Round(tr, h)) using (var br = new SolidBrush(Theme.Border)) g.FillPath(br, gp);
+        if (val > 0) { var fr = new Rectangle(tr.X, tr.Y, Math.Max(h, tr.Width * val / 100), h); using (var gp = Theme.Round(fr, h)) using (var br = new LinearGradientBrush(fr, Theme.Accent, Theme.Accent2, 0f)) g.FillPath(br, gp); }
+    }
+}
+
 class Card : Panel
 {
     public Card() { SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true); }
@@ -279,7 +444,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "6.1";
+    public const string Version = "6.6";
     // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
     // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
     public static string StatsCode = "3mkayderado";
@@ -409,8 +574,8 @@ class SetupForm : Form
         var l1 = new Label { Left = 24, Top = 110, Width = 550, Height = 24, Text = "Where should Study Tracker be installed?", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
         var tb = new TextBox { Left = 24, Top = 140, Width = 440, Text = Installer.DefaultDir() };
         var br2 = Theme.Btn("Browse...", 474, 137, 100, "c");
-        var cd = new CheckBox { Left = 24, Top = 192, Width = 400, Text = "Create a desktop shortcut", Checked = true };
-        var cm = new CheckBox { Left = 24, Top = 222, Width = 400, Text = "Add to the Start menu", Checked = true };
+        var cd = new SwitchBox { Left = 24, Top = 192, Width = 400, Text = "Create a desktop shortcut", Checked = true };
+        var cm = new SwitchBox { Left = 24, Top = 222, Width = 400, Text = "Add to the Start menu", Checked = true };
         var note = new Label { Left = 24, Top = 262, Width = 550, Height = 40, Tag = "muted", Text = "Installing to Program Files will ask Windows for permission once. Your study data is kept separately in your user folder." };
         var bi = Theme.Btn("Install", 24, 330, 120, "a"); bi.Height = 38;
         var br = Theme.Btn("Run without installing", 154, 330, 200, "b"); br.Height = 38;
@@ -516,7 +681,7 @@ class MiniTimer : Form
     }
     Button Mk(string s, int x, int y, int w, int h, Color c)
     {
-        var b = new Button { Text = s, Left = x, Top = y, Width = w, Height = h, FlatStyle = FlatStyle.Flat, BackColor = c, ForeColor = Color.White, Cursor = Cursors.Hand, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
+        var b = new PillButton { Text = s, Left = x, Top = y, Width = w, Height = h, FlatStyle = FlatStyle.Flat, BackColor = c, ForeColor = Color.White, Cursor = Cursors.Hand, Font = new Font("Segoe UI Semibold", 9) };
         b.FlatAppearance.BorderSize = 0; return b;
     }
     void Show2() { lbl.Text = left <= 0 ? "00:00" : (left / 60).ToString("00") + ":" + (left % 60).ToString("00"); if (clock != null) clock.Invalidate(); }
@@ -547,7 +712,7 @@ class Stepper : Card
     bool clock;
     public bool Clock { get { return clock; } set { clock = value; lbl.Text = Shown(); } }   // value = minutes since midnight
     string Shown() { return clock ? (val / 60).ToString("00") + ":" + (val % 60).ToString("00") : val + " " + suf; }
-    public int Value { get { return val; } set { val = clock ? ((value % 1440) + 1440) % 1440 : Math.Max(Min, Math.Min(Max, value)); lbl.Text = Shown(); if (Changed != null) Changed(this, EventArgs.Empty); } }
+    public int Value { get { return val; } set { int old = val; val = clock ? ((value % 1440) + 1440) % 1440 : Math.Max(Min, Math.Min(Max, value)); lbl.Text = Shown(); if (val != old && Changed != null) Changed(this, EventArgs.Empty); } }
     public string Suffix { get { return suf; } set { suf = value; lbl.Text = Shown(); } }
 }
 
@@ -563,17 +728,15 @@ class AskForm : Form
     void Init(string title, string sub, int h)
     {
         FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
-        ClientSize = new Size(440, h); BackColor = Theme.Bg; Font = new Font("Segoe UI", 9); Text = title;
-        var head = new Panel { Dock = DockStyle.Top, Height = 70, Tag = "banner" };
-        head.Paint += (s, e) => { using (var gb = new LinearGradientBrush(head.ClientRectangle, Theme.Base, Theme.Accent, 0f)) e.Graphics.FillRectangle(gb, head.ClientRectangle); };
-        head.Controls.Add(new Label { Left = 22, Top = 10, Width = 396, Height = 28, Text = title, Tag = "white", ForeColor = Color.White, Font = new Font("Segoe UI", 12.5f, FontStyle.Bold) });
-        head.Controls.Add(new Label { Left = 24, Top = 40, Width = 396, Height = 22, Text = sub, Tag = "white", ForeColor = Color.FromArgb(215, 245, 240), AutoEllipsis = true });
-        Controls.Add(head);
+        ClientSize = new Size(440, h); BackColor = Theme.Card; Font = new Font("Segoe UI", 9); Text = title;
+        Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 68 });   // footer strip (colour comes from Theme.Skin)
+        Controls.Add(new Label { Left = 24, Top = 16, Width = 392, Height = 28, Text = title, Font = new Font("Segoe UI Semibold", 13), AutoEllipsis = true });
+        Controls.Add(new Label { Left = 25, Top = 46, Width = 392, Height = 20, Text = sub, Tag = "muted", AutoEllipsis = true });
     }
     void Buttons(int h)
     {
-        var ok = Theme.Btn("Save", 316, h - 56, 100, "a"); ok.Height = 36; ok.DialogResult = DialogResult.OK;
-        var no = Theme.Btn("Cancel", 206, h - 56, 100, "c"); no.Height = 36; no.DialogResult = DialogResult.Cancel;
+        var ok = Theme.Btn("Save", 24, h - 50, 100, "a"); ok.Height = 32; ok.DialogResult = DialogResult.OK;
+        var no = Theme.Btn("Cancel", 132, h - 50, 100, "c"); no.Height = 32; no.DialogResult = DialogResult.Cancel;
         Controls.Add(ok); Controls.Add(no); AcceptButton = ok; CancelButton = no; Theme.Skin(this); Theme.ApplyUserFont(this, true);
     }
     public AskForm(string title, string label, string def)   // text answer
@@ -598,7 +761,7 @@ class AskForm : Form
         sm.Changed += delegate { upd(); }; upd();
         int[] q = { 0, 1, 3, 7, 14, 30 }; string[] qn = { "Today", "Tomorrow", "3 days", "1 week", "2 weeks", "1 month" };
         for (int i = 0; i < q.Length; i++) { int v = q[i]; var c = Theme.Btn(qn[i], 24 + i * 66, 166, 62, "a"); c.Height = 30; c.Click += delegate { sm.Value = v; }; Controls.Add(c); }
-        var nd = Theme.Btn("No date", 24, h - 56, 100, "b"); nd.Height = 36; nd.Click += delegate { NoDate = true; DialogResult = DialogResult.OK; Close(); }; Controls.Add(nd);
+        var nd = Theme.Btn("No date", 240, h - 50, 100, "c"); nd.Height = 32; nd.Click += delegate { NoDate = true; DialogResult = DialogResult.OK; Close(); }; Controls.Add(nd);
         Buttons(h);
     }
     public AskForm(string title, string sub, int page, int total)   // reading progress: current page + total pages
@@ -628,6 +791,88 @@ class AskForm : Form
     }
 }
 
+// ===== Weekly timetable: seven rows, one chip per planned study block =====
+class TimetableCard : Card
+{
+    public List<Slot> Slots = new List<Slot>(); public Func<Slot, int> State; public Action<int> OnDay; public Action<Slot> OnSlot;   // State: 0 planned, 1 done, 2 missed
+    List<KeyValuePair<Rectangle, Slot>> hits = new List<KeyValuePair<Rectangle, Slot>>();
+    static string[] DN = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+    const int Head = 26;
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e); if (e.Button != MouseButtons.Left) return;
+        foreach (var h in hits) if (h.Key.Contains(e.Location)) { if (OnSlot != null) OnSlot(h.Value); return; }
+        int rh = Math.Max(1, (Height - Head - 8) / 7), day = (e.Y - Head) / rh;
+        if (e.Y >= Head && day >= 0 && day < 7 && OnDay != null) OnDay(day);
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e); var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; hits.Clear();
+        TextRenderer.DrawText(g, "Weekly timetable  -  click a day to add a block   (green = done, red = missed)", Theme.F(8f, FontStyle.Bold), new Point(14, 6), Theme.Muted);
+        int rh = (Height - Head - 8) / 7, today = ((int)DateTime.Today.DayOfWeek + 6) % 7;
+        for (int d = 0; d < 7; d++)
+        {
+            int y = Head + d * rh; var row = new Rectangle(8, y, Width - 17, rh - 3);
+            using (var gp = Theme.Round(row, 10))
+            {
+                if (d == today) using (var br = new SolidBrush(Color.FromArgb(28, Theme.Accent))) g.FillPath(br, gp);
+                using (var pen = new Pen(d == today ? Theme.Accent : Theme.Border)) g.DrawPath(pen, gp);
+            }
+            TextRenderer.DrawText(g, DN[d], Theme.F(8.5f, FontStyle.Bold), new Rectangle(14, y, 40, rh - 3), d == today ? Theme.Accent : Theme.Text, TextFormatFlags.VerticalCenter);
+            int x = 56; var list = Slots.Where(q => q.Day == d).OrderBy(q => q.Time).ToList();
+            if (list.Count == 0) TextRenderer.DrawText(g, "free", Theme.F(8f), new Rectangle(x, y, 80, rh - 3), Theme.Muted, TextFormatFlags.VerticalCenter);
+            for (int i = 0; i < list.Count; i++)
+            {
+                var sl = list[i]; string subj = sl.Subject.Length > 14 ? sl.Subject.Substring(0, 13) + "..." : sl.Subject;
+                string txt = sl.Time + " " + subj + " " + sl.Minutes + "m"; int w = TextRenderer.MeasureText(g, txt, Theme.F(8f)).Width + 14;
+                if (x + w > Width - 16) { TextRenderer.DrawText(g, "+" + (list.Count - i), Theme.F(8f, FontStyle.Bold), new Rectangle(x, y, 40, rh - 3), Theme.Muted, TextFormatFlags.VerticalCenter); break; }
+                var chip = new Rectangle(x, y + 3, w, rh - 9); int st = State != null ? State(sl) : 0;
+                Color c = st == 1 ? Color.SeaGreen : st == 2 ? Color.FromArgb(230, 90, 90) : Theme.Accent;
+                using (var gp = Theme.Round(chip, 12)) { using (var br = new SolidBrush(Color.FromArgb(st == 1 ? 80 : 45, c))) g.FillPath(br, gp); using (var pen = new Pen(c)) g.DrawPath(pen, gp); }
+                TextRenderer.DrawText(g, txt, Theme.F(8f), chip, Theme.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                hits.Add(new KeyValuePair<Rectangle, Slot>(chip, sl)); x += w + 6;
+            }
+        }
+    }
+}
+
+// ===== Add / edit one study block =====
+class SlotForm : Form
+{
+    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); try { int v = Theme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref v, 4); DwmSetWindowAttribute(Handle, 19, ref v, 4); } catch { } }
+    public Slot Result; public bool Deleted;
+    public SlotForm(string day, Slot cur, List<string> subjects, bool exists)
+    {
+        FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
+        int h = 316; ClientSize = new Size(440, h); BackColor = Theme.Card; Font = new Font("Segoe UI", 9); Text = "Study block";
+        Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 68 });   // footer strip (colour comes from Theme.Skin)
+        Controls.Add(new Label { Left = 24, Top = 16, Width = 392, Height = 28, Text = "Study block", Font = new Font("Segoe UI Semibold", 13), AutoEllipsis = true });
+        Controls.Add(new Label { Left = 25, Top = 46, Width = 392, Height = 20, Text = day, Tag = "muted", AutoEllipsis = true });
+        Controls.Add(new Label { Left = 24, Top = 86, Width = 392, Height = 22, Text = "What will you study?", Tag = "muted" });
+        var cb = new ComboBox { Left = 24, Top = 112, Width = 392, DropDownStyle = ComboBoxStyle.DropDown, Font = new Font("Segoe UI", 10) };
+        foreach (var t in subjects) cb.Items.Add(t);
+        cb.Text = cur.Subject; Controls.Add(cb);
+        Controls.Add(new Label { Left = 24, Top = 160, Width = 190, Height = 22, Text = "Start time", Tag = "muted" });
+        Controls.Add(new Label { Left = 226, Top = 160, Width = 190, Height = 22, Text = "Length", Tag = "muted" });
+        int mins = 18 * 60, hh, mm; var parts = (cur.Time ?? "18:00").Split(':');
+        if (parts.Length == 2 && int.TryParse(parts[0], out hh) && int.TryParse(parts[1], out mm)) mins = hh * 60 + mm;
+        var st = new Stepper { Left = 24, Top = 186, Width = 190, Clock = true, Step = 15, Value = mins }; Controls.Add(st);
+        var sd = new Stepper { Left = 226, Top = 186, Width = 190, Min = 5, Max = 600, Step = 5, Suffix = "min", Value = Math.Max(5, cur.Minutes) }; Controls.Add(sd);
+        var ok = Theme.Btn("Save", 24, h - 50, 100, "a"); ok.Height = 32;
+        ok.Click += delegate
+        {
+            string subj = cb.Text.Trim(); if (subj.Length == 0) { MessageBox.Show(this, "Type or choose what you will study."); return; }
+            Result = new Slot { Day = cur.Day, Subject = subj, Minutes = sd.Value, Time = (st.Value / 60).ToString("00") + ":" + (st.Value % 60).ToString("00") };
+            DialogResult = DialogResult.OK; Close();
+        };
+        var no = Theme.Btn("Cancel", 132, h - 50, 100, "c"); no.Height = 32; no.DialogResult = DialogResult.Cancel;
+        Controls.Add(ok); Controls.Add(no); AcceptButton = ok; CancelButton = no;
+        if (exists) { var del = Theme.Btn("Delete", 240, h - 50, 100, "b"); del.Height = 32; del.Click += delegate { Deleted = true; DialogResult = DialogResult.OK; Close(); }; Controls.Add(del); }
+        Theme.Skin(this); Theme.ApplyUserFont(this, true);
+    }
+}
+
 // ===== Simple read-only report window (weekly summary) =====
 class InfoForm : Form
 {
@@ -636,12 +881,10 @@ class InfoForm : Form
     public InfoForm(string title, string sub, List<string[]> rows)
     {
         FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
-        int h = 90 + rows.Count * 52 + 90; ClientSize = new Size(460, h); BackColor = Theme.Bg; Font = new Font("Segoe UI", 9); Text = title;
-        var head = new Panel { Dock = DockStyle.Top, Height = 70, Tag = "banner" };
-        head.Paint += (s, e) => { using (var gb = new LinearGradientBrush(head.ClientRectangle, Theme.Base, Theme.Accent, 0f)) e.Graphics.FillRectangle(gb, head.ClientRectangle); };
-        head.Controls.Add(new Label { Left = 22, Top = 10, Width = 410, Height = 28, Text = title, Tag = "white", ForeColor = Color.White, Font = new Font("Segoe UI", 15, FontStyle.Bold) });
-        head.Controls.Add(new Label { Left = 24, Top = 40, Width = 410, Height = 22, Text = sub, Tag = "white", ForeColor = Color.FromArgb(215, 245, 240) });
-        Controls.Add(head);
+        int h = 90 + rows.Count * 52 + 90; ClientSize = new Size(460, h); BackColor = Theme.Card; Font = new Font("Segoe UI", 9); Text = title;
+        Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 68 });   // footer strip (colour comes from Theme.Skin)
+        Controls.Add(new Label { Left = 24, Top = 16, Width = 392, Height = 28, Text = title, Font = new Font("Segoe UI Semibold", 13), AutoEllipsis = true });
+        Controls.Add(new Label { Left = 25, Top = 46, Width = 392, Height = 20, Text = sub, Tag = "muted", AutoEllipsis = true });
         var card = new Card { Left = 24, Top = 86, Width = 412, Height = rows.Count * 52 + 10 };
         for (int i = 0; i < rows.Count; i++)
         {
@@ -649,7 +892,7 @@ class InfoForm : Form
             card.Controls.Add(new Label { Left = 16, Top = 28 + i * 52, Width = 380, Height = 24, Text = rows[i][1], Font = new Font("Segoe UI", 10.5f, FontStyle.Bold) });
         }
         Controls.Add(card);
-        var ok = Theme.Btn("Close", 336, h - 52, 100, "a"); ok.Height = 36; ok.DialogResult = DialogResult.OK; Controls.Add(ok); AcceptButton = ok; CancelButton = ok;
+        var ok = Theme.Btn("Close", 24, h - 50, 100, "a"); ok.Height = 32; ok.DialogResult = DialogResult.OK; Controls.Add(ok); AcceptButton = ok; CancelButton = ok;
         Theme.Skin(this); Theme.ApplyUserFont(this, true);
     }
 }
@@ -711,16 +954,16 @@ class MainForm : Form
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, int m, int w, string l);
     const int PAGE_HOME = 0, PAGE_PLAN = 1, PAGE_FOCUS = 2, PAGE_STATS = 3, PAGE_FILES = 4, PAGE_SETTINGS = 5, PAGE_ABOUT = 6, PAGES = 7;
-    string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 9f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false, onboardingDone = false, minimizeDuringTimer = true;
+    string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 9f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false, onboardingDone = false, minimizeDuringTimer = true; int scanGeneration = 0;
     List<StudyTask> tasks = new List<StudyTask>(); List<Sess> sessions = new List<Sess>(); List<string[]> index = new List<string[]>();
     Panel banner, content; Panel[] pages = new Panel[PAGES]; Button[] nav = new Button[PAGES]; PictureBox pic; Button bDark, bPal;
-    string examName = "", examDate = "", lastSummary = "", lastDaily = ""; bool remDaily, remBreak, remTray, exiting, trayHinted; int remHour = 18, remMinute = 0, remBreakMin = 45; double breakAcc; NotifyIcon tray; Timer remTimer; Dictionary<string, BookProg> books = new Dictionary<string, BookProg>(); string newDue = ""; Button bDue;
+    string examName = "", examDate = "", lastSummary = "", lastDaily = ""; bool remDaily, remBreak, remTray, exiting, trayHinted; int remHour = 18, remMinute = 0, remBreakMin = 45; double breakAcc; NotifyIcon tray; Timer remTimer; Dictionary<string, BookProg> books = new Dictionary<string, BookProg>(); string newDue = ""; Button bDue; List<Slot> slots = new List<Slot>();
     bool statsOptIn = true, statsAsked, installSent, statsBusy; Label lblUsers; Timer usersTimer; string uWeek, uMonth, uTotal; int usersTick; DateTime lastPing = DateTime.MinValue; bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
     Timer dotTimer, hourTimer; Label lblVer, lblUpdInfo, lblUpdStatus; Button bCheck, bInstall; ProgressBar prog; RadioButton rbAuto, rbManual;
     TextBox txtTitle; Stepper numTarget; FlowLayoutPanel taskFlow, homeFlow; Card homeSum; Button[] homeFilters = new Button[3]; StudyTask selTask; Label lblPlanSummary; Label lblDayInfo; ListBox lbDay; DateTime selDay = DateTime.Today; Label lblStatus, lblHello, lblQuote, lblInst; MiniTimer mini; StudyTask miniTask;
-    Label lblSummary; ProgressBar bar; Panel chart; ListBox lbSubjects; NumericUpDown numGoal; Label lblRoot; TextBox txtSearch; ListView lvFiles;
+    Label lblSummary; RoundBar bar; Panel chart; ListBox lbSubjects; Stepper numGoal; Label lblRoot; TextBox txtSearch; ListView lvFiles;
     // focus timer (Pomodoro)
-    Panel ring; Label lblRingTime, lblRingMode, lblFocusStatus; Button bStart, bReset, bSound; NumericUpDown numFocusMin; ComboBox cbSub; CheckBox chkLog;
+    Panel ring; Label lblRingTime, lblRingMode, lblFocusStatus; Button bStart, bReset, bSound; Stepper numFocusMin; ComboBox cbSub; CheckBox chkLog;
     int fleft = 25 * 60, ftotal = 25 * 60, focusCount; string fmode = "focus"; bool frunning; Timer fTimer; Button bFocus, bShort, bLong;
     // streak calendar
     Panel heat; DateTime viewMonth; Label lblStreak; Button bPrev, bNext, bThisMonth;
@@ -740,9 +983,9 @@ class MainForm : Form
         content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14) }; Controls.Add(content); BuildFooter();
         for (int i = 0; i < PAGES; i++) { pages[i] = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Bg }; content.Controls.Add(pages[i]); }
         var navBar = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Theme.Bg };
-        string[] names = { "Home", "Study Plan", "Focus Timer", "Stats", "Find Files", "Settings", "About" };
-        for (int i = 0; i < PAGES; i++) { int k = i; nav[i] = Theme.Btn(names[i], 8 + i * 118, 8, 114, "nav"); nav[i].Height = 34; nav[i].Click += delegate { ShowPage(k); }; navBar.Controls.Add(nav[i]); }
-        nav[PAGE_SETTINGS].Paint += NavDot; Controls.Add(navBar);
+        string[] names = { "Home", "Study Plan", "Focus Timer", "Stats", "Find Files", "Settings", "About" }; string[] navIcons = { "home", "list", "timer", "chart", "folder", "gear", "info" };
+        for (int i = 0; i < PAGES; i++) { int k = i; nav[i] = Theme.Btn(names[i], 8 + i * 118, 8, 114, "nav"); ((PillButton)nav[i]).Icon = navIcons[i]; nav[i].Height = 34; nav[i].Click += delegate { ShowPage(k); }; navBar.Controls.Add(nav[i]); }
+        ((PillButton)nav[PAGE_SETTINGS]).Overlay = delegate(Graphics g) { NavDot(null, new PaintEventArgs(g, Rectangle.Empty)); }; Controls.Add(navBar);
         Controls.Add(new Panel { Dock = DockStyle.Top, Height = 4, Tag = "line" });
         BuildBanner(); BuildHome(pages[PAGE_HOME]); BuildPlan(pages[PAGE_PLAN]); BuildFocus(pages[PAGE_FOCUS]); BuildStats(pages[PAGE_STATS]); BuildFiles(pages[PAGE_FILES]); BuildSettings(pages[PAGE_SETTINGS]); BuildAbout(pages[PAGE_ABOUT]);
         if (stamp == DateTime.MinValue) stamp = DateTime.UtcNow; ApplyFontPrefs(); loading = false; Recolor(); RefreshTasks(); RefreshStats(); RefreshStreak(); Scan(); Greet(); ShowPage(0); StartTimers();
@@ -775,7 +1018,12 @@ class MainForm : Form
         };
     }
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); DarkBar(); }
-    void DarkBar() { try { int v = Theme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref v, 4); DwmSetWindowAttribute(Handle, 19, ref v, 4); } catch { } }
+    static int Bgr(Color c) { return c.R | (c.G << 8) | (c.B << 16); }
+    void DarkBar()
+    {
+        try { int v = Theme.Dark ? 1 : 0; DwmSetWindowAttribute(Handle, 20, ref v, 4); DwmSetWindowAttribute(Handle, 19, ref v, 4); } catch { }
+        try { int cap = Bgr(Theme.Base), txt = Bgr(Color.White), bor = Bgr(Theme.Border); DwmSetWindowAttribute(Handle, 35, ref cap, 4); DwmSetWindowAttribute(Handle, 36, ref txt, 4); DwmSetWindowAttribute(Handle, 34, ref bor, 4); } catch { }   // Windows 11: caption colour = the banner colour
+    }
 
     void Recolor()
     {
@@ -843,6 +1091,7 @@ class MainForm : Form
             else if (p[0] == "J" && p.Length > 1 && long.TryParse(p[1], out tk) && tk >= 0) lastPing = new DateTime(tk, DateTimeKind.Utc);
             else if (p[0] == "E" && p.Length > 2) { examName = p[1]; examDate = p[2]; }
             else if (p[0] == "I" && p.Length > 1) lastSummary = p[1];
+            else if (p[0] == "P" && p.Length > 4 && int.TryParse(p[1], out a) && int.TryParse(p[3], out b)) slots.Add(new Slot { Day = a, Time = p[2], Minutes = b, Subject = p[4] });
             else if (p[0] == "B" && p.Length > 4 && int.TryParse(p[2], out a) && int.TryParse(p[3], out b) && long.TryParse(p[4], out tk)) books[p[1]] = new BookProg { FilePath = p[1], Page = a, Total = b, Opened = tk };
             else if (p[0] == "C" && p.Length > 7)
             {
@@ -859,6 +1108,7 @@ class MainForm : Form
         var l = new List<string> { "R\t" + root, "N\t" + Clean(userName), "M\t" + (muted ? "1" : "0"), "D\t" + (Theme.Dark ? "1" : "0"), "A\t" + Theme.Pal, "G\t" + goal, "F\t" + focusCount, "U\t" + stamp.Ticks, "K\t" + lastCheck.Ticks, "L\t" + latest.Ticks, "Z\t" + (autoMode ? "1" : "0"), "Q\t" + uiFontSize.ToString(CultureInfo.InvariantCulture), "V\t" + uiFontFamily, "W\t" + (onboardingDone ? "1" : "0"), "X\t" + (minimizeDuringTimer ? "1" : "0") };
         l.Add("Y\t" + (statsOptIn ? "1" : "0")); l.Add("H\t" + (statsAsked ? "1" : "0")); l.Add("O\t" + (installSent ? "1" : "0")); l.Add("J\t" + lastPing.Ticks);
         l.Add("E\t" + Clean(examName) + "\t" + examDate); l.Add("I\t" + lastSummary);
+        foreach (var sl in slots) l.Add("P\t" + sl.Day + "\t" + sl.Time + "\t" + sl.Minutes + "\t" + Clean(sl.Subject));
         l.Add("C\t" + (remDaily ? "1" : "0") + "\t" + remHour + "\t" + remMinute + "\t" + (remBreak ? "1" : "0") + "\t" + remBreakMin + "\t" + (remTray ? "1" : "0") + "\t" + lastDaily);
         foreach (var bk in books.Values) l.Add("B\t" + bk.FilePath + "\t" + bk.Page + "\t" + bk.Total + "\t" + bk.Opened);
         foreach (var t in tasks) l.Add("T\t" + Clean(t.Title) + "\t" + t.Target + "\t" + (t.Done ? "1" : "0") + "\t" + t.Due);
@@ -877,8 +1127,8 @@ class MainForm : Form
         var row = new Panel { Dock = DockStyle.Top, Height = 48 };
         string[] n = { "All tasks", "To do", "Completed" };
         for (int i = 0; i < 3; i++) { int k = i; homeFilters[i] = Theme.Btn(n[i], i * 142, 6, 134, "nav"); homeFilters[i].Height = 34; homeFilters[i].Click += delegate { homeFilter = k; RefreshHome(); }; row.Controls.Add(homeFilters[i]); }
-        var add = Theme.Btn("+ New task", 436, 6, 120, "b"); add.Height = 34; add.Click += delegate { ShowPage(PAGE_PLAN); txtTitle.Focus(); };
-        var exam = Theme.Btn("Exam date", 564, 6, 110, "c"); exam.Height = 34;
+        var add = Theme.Btn("+ New task", 436, 6, 120, "b"); add.Height = 34; ((PillButton)add).Icon = "plus"; add.Text = "New task"; add.Click += delegate { ShowPage(PAGE_PLAN); txtTitle.Focus(); };
+        var exam = Theme.Btn("Exam date", 564, 6, 110, "c"); exam.Height = 34; ((PillButton)exam).Icon = "calendar";
         exam.Click += delegate
         {
             string nm = Prompt("Exam countdown", "What is your exam called? (e.g. Anatomy final)", examName); if (nm == null) return;
@@ -960,8 +1210,8 @@ class MainForm : Form
         var bar2 = new Card { Dock = DockStyle.Fill };
         txtTitle = new TextBox { Left = 20, Top = 15, Width = 300, Font = new Font("Segoe UI", 10.5f), Tag = "flat" };
         numTarget = new Stepper { Top = 10 };
-        bDue = Theme.Btn("Due: none", 0, 11, 130, "c"); bDue.Height = 34;
-                var bAdd = Theme.Btn("Add task", 0, 10, 110, "a"); bAdd.Height = 36;
+        bDue = Theme.Btn("Due: none", 0, 11, 130, "c"); bDue.Height = 34; ((PillButton)bDue).Icon = "calendar";
+                var bAdd = Theme.Btn("Add task", 0, 10, 110, "a"); bAdd.Height = 36; ((PillButton)bAdd).Icon = "plus";
         bar2.Controls.AddRange(new Control[] { txtTitle, numTarget, bDue, bAdd });
         Action lay = delegate { int w = bar2.Width; bAdd.Left = w - 126; numTarget.Left = w - 262; bDue.Left = w - 400; txtTitle.Width = Math.Max(100, w - 400 - 34); };
         bar2.Resize += delegate { lay(); }; lay();
@@ -1064,10 +1314,10 @@ class MainForm : Form
         bReset = Theme.Btn("Reset", 0, 0, 100, "b"); bReset.Height = 40;
         bSound = Theme.Btn(muted ? "Sound: Off" : "Sound: On", 0, 0, 110, "c"); bSound.Height = 40;
         lblFocusStatus = new Label { Width = 700, Height = 40, TextAlign = ContentAlignment.MiddleCenter, Tag = "muted", Font = new Font("Segoe UI", 9, FontStyle.Italic), Text = "Completed focus blocks: 0" };
-        chkLog = new CheckBox { Width = 220, Text = "Auto-log focus blocks to:", Checked = true };
+        chkLog = new SwitchBox { Width = 220, Text = "Auto-log focus blocks to:", Checked = true };
         cbSub = new ComboBox { Width = 270, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9) };
         var lblCustom = new Label { Width = 70, Text = "Custom:", Tag = "muted" };
-        numFocusMin = new NumericUpDown { Width = 64, Minimum = 1, Maximum = 180, Value = 25 };
+        numFocusMin = new Stepper { Width = 140, Min = 1, Max = 180, Step = 5, Suffix = "min", Value = 25 };
         var bSet = Theme.Btn("Set", 0, 0, 56, "c"); bSet.Height = 28;
         p.Controls.AddRange(new Control[] { bFocus, bShort, bLong, ring, bStart, bReset, bSound, lblFocusStatus, chkLog, cbSub, lblCustom, numFocusMin, bSet });
         Action lay = delegate
@@ -1078,14 +1328,14 @@ class MainForm : Form
             bStart.SetBounds(cx - 188, 318, 150, 40); bReset.SetBounds(cx - 30, 318, 100, 40); bSound.SetBounds(cx + 78, 318, 110, 40);
             lblFocusStatus.SetBounds(cx - 350, 366, 700, 40);
             chkLog.SetBounds(cx - 250, 418, 220, 26); cbSub.SetBounds(cx - 24, 416, 270, 28);
-            lblCustom.SetBounds(cx - 130, 458, 70, 24); numFocusMin.SetBounds(cx - 56, 454, 64, 28); bSet.SetBounds(cx + 16, 454, 56, 28);
+            lblCustom.SetBounds(cx - 130, 458, 70, 24); numFocusMin.SetBounds(cx - 56, 450, 140, 36); bSet.SetBounds(cx + 92, 452, 56, 32);
         };
         p.Resize += delegate { lay(); }; lay();
         bFocus.Click += delegate { SetMode("focus", 25); };
         bShort.Click += delegate { SetMode("short", 5); };
         bLong.Click += delegate { SetMode("long", 15); };
         bSet.Click += delegate { SetMode("focus", (int)numFocusMin.Value); };
-        numFocusMin.ValueChanged += delegate { if (!frunning && fmode == "focus") SetMode("focus", (int)numFocusMin.Value); };
+        numFocusMin.Changed += delegate { if (!frunning && fmode == "focus") SetMode("focus", (int)numFocusMin.Value); };
         bStart.Click += delegate { ToggleRun(); };
         bReset.Click += delegate { frunning = false; fleft = ftotal; bStart.Text = "Start"; UpdateRing(); };
         bSound.Click += delegate { muted = !muted; bSound.Text = muted ? "Sound: Off" : "Sound: On"; Save(); };
@@ -1111,7 +1361,7 @@ class MainForm : Form
     void SetMode(string m, int mins)
     {
         fmode = m; frunning = false; bStart.Text = "Start";
-        ftotal = fleft = mins * 60; if (m == "focus") numFocusMin.Value = Math.Max(numFocusMin.Minimum, Math.Min(numFocusMin.Maximum, mins));
+        ftotal = fleft = mins * 60; if (m == "focus") numFocusMin.Value = Math.Max(numFocusMin.Min, Math.Min(numFocusMin.Max, mins));
         bFocus.BackColor = m == "focus" ? Theme.Accent : Theme.Card; bFocus.ForeColor = m == "focus" ? Color.White : Theme.Text;
         bShort.BackColor = m == "short" ? Theme.Accent3 : Theme.Card; bShort.ForeColor = m == "short" ? Theme.Base : Theme.Text;
         bLong.BackColor = m == "long" ? Theme.Accent2 : Theme.Card; bLong.ForeColor = m == "long" ? Color.White : Theme.Text;
@@ -1159,13 +1409,14 @@ class MainForm : Form
         var right = new Panel { Dock = DockStyle.Fill }; var left = new Panel { Dock = DockStyle.Left, Width = 420, Padding = new Padding(0, 0, 14, 0) };
         p.Controls.Add(right); p.Controls.Add(left);
         lbSubjects = new ListBox { Dock = DockStyle.Fill, Font = new Font("Consolas", 9) }; left.Controls.Add(lbSubjects);
-        chart = new Card { Dock = DockStyle.Top, Height = 210 }; chart.Paint += DrawChart; left.Controls.Add(chart);
-        bar = new ProgressBar { Dock = DockStyle.Top, Height = 22, Maximum = 100 }; left.Controls.Add(bar);
+        var tt = new TimetableCard { Dock = DockStyle.Top, Height = 232, Slots = slots };
+        tt.State = SlotState; tt.OnDay = AddSlot; tt.OnSlot = EditSlot; chart = tt; left.Controls.Add(tt);
+        bar = new RoundBar { Dock = DockStyle.Top, Height = 22 }; left.Controls.Add(bar);
         var g = new Panel { Dock = DockStyle.Top, Height = 40 };
-        numGoal = new NumericUpDown { Left = 190, Top = 6, Width = 80, Minimum = 5, Maximum = 1440, Value = Math.Min(1440, Math.Max(5, goal)) };
-        numGoal.ValueChanged += delegate { goal = (int)numGoal.Value; Save(); RefreshStats(); RefreshStreak(); };
-        var bWk = Theme.Btn("Weekly summary", 284, 4, 120, "b"); bWk.Height = 32; bWk.Click += delegate { ShowWeekly(); };
-        g.Controls.AddRange(new Control[] { new Label { Left = 0, Top = 10, Width = 185, Text = "Daily goal (minutes):" }, numGoal, bWk }); left.Controls.Add(g);
+        numGoal = new Stepper { Left = 92, Top = 2, Width = 136, Min = 5, Max = 1440, Step = 5, Suffix = "min", Value = Math.Min(1440, Math.Max(5, goal)) };
+        numGoal.Changed += delegate { goal = numGoal.Value; Save(); RefreshStats(); RefreshStreak(); };
+        var bWk = Theme.Btn("Weekly summary", 240, 2, 164, "b"); bWk.Height = 36; ((PillButton)bWk).Icon = "chart"; bWk.Click += delegate { ShowWeekly(); };
+        g.Controls.AddRange(new Control[] { new Label { Left = 0, Top = 10, Width = 90, Text = "Daily goal" }, numGoal, bWk }); left.Controls.Add(g);
         lblSummary = new Label { Dock = DockStyle.Top, Height = 36, Font = new Font("Segoe UI", 10, FontStyle.Bold), Tag = "title", TextAlign = ContentAlignment.MiddleLeft }; left.Controls.Add(lblSummary);
         BuildStreak(right);
     }
@@ -1315,16 +1566,58 @@ class MainForm : Form
         menu.Items.Add("Clear progress", null, delegate { if (lvFiles.SelectedItems.Count > 0) { var it = lvFiles.SelectedItems[0]; books.Remove((string)it.Tag); Save(); it.SubItems[1].Text = ""; it.SubItems[2].Text = ""; } });
         lvFiles.ContextMenuStrip = menu;
     }
-    void Walk(string dir)
+    static List<string[]> WalkFiles(string startDir)
     {
-        try { foreach (var f in Directory.GetFiles(dir)) { var n = Path.GetFileName(f); index.Add(new string[] { n.ToLower(), n, f }); } } catch { }
-        try { foreach (var d in Directory.GetDirectories(dir)) Walk(d); } catch { }
+        // Run filesystem enumeration off the UI thread; use an explicit stack to avoid deep-recursion crashes.
+        var found = new List<string[]>(); var pending = new Stack<string>(); pending.Push(startDir);
+        while (pending.Count > 0)
+        {
+            string dir = pending.Pop();
+            try
+            {
+                foreach (var f in Directory.GetFiles(dir))
+                {
+                    string name = Path.GetFileName(f);
+                    found.Add(new string[] { name.ToLowerInvariant(), name, f });
+                }
+            }
+            catch { /* inaccessible folders/files are skipped */ }
+            try { foreach (var d in Directory.GetDirectories(dir)) pending.Push(d); }
+            catch { /* inaccessible folders are skipped */ }
+        }
+        return found;
     }
     void Scan()
     {
+        int generation = ++scanGeneration;
         index.Clear();
-        if (root == "" || !Directory.Exists(root)) { lblRoot.Text = "No root folder selected"; return; }
-        Cursor = Cursors.WaitCursor; Walk(root); Cursor = Cursors.Default; lblRoot.Text = root + "  (" + index.Count + " files)"; Search();
+        string scanRoot = root;
+        if (string.IsNullOrWhiteSpace(scanRoot) || !Directory.Exists(scanRoot))
+        {
+            if (lblRoot != null) lblRoot.Text = "No root folder selected";
+            if (lvFiles != null) Search();
+            return;
+        }
+        if (lblRoot != null) lblRoot.Text = "Scanning folder…";
+        if (lvFiles != null) lvFiles.Cursor = Cursors.WaitCursor;
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        {
+            List<string[]> found = WalkFiles(scanRoot);
+            try
+            {
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke((Action)delegate
+                {
+                    // Ignore stale scans if the user picked another folder or started a newer scan.
+                    if (IsDisposed || generation != scanGeneration) return;
+                    index = found;
+                    if (lvFiles != null) lvFiles.Cursor = Cursors.Default;
+                    if (lblRoot != null) lblRoot.Text = scanRoot + "  (" + index.Count + " files)";
+                    Search();
+                });
+            }
+            catch { /* the form may close while scanning */ }
+        });
     }
     string ProgText(string p) { BookProg b; return books.TryGetValue(p, out b) && b.Total > 0 ? b.Page + " / " + b.Total + "  (" + Math.Min(100, b.Page * 100 / b.Total) + "%)" : ""; }
     string OpenedText(string p) { BookProg b; return books.TryGetValue(p, out b) && b.Opened > 0 ? new DateTime(b.Opened, DateTimeKind.Utc).ToLocalTime().ToString("d MMM, HH:mm", CultureInfo.CurrentCulture) : ""; }
@@ -1421,18 +1714,18 @@ class MainForm : Form
         var fontLabel = new Label { Left = 10, Top = 208, Width = 90, Height = 28, Text = "Font size", Tag = "muted" };
         var fontPick = new ComboBox { Left = 105, Top = 204, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList }; fontPick.Items.AddRange(new object[] { "Small", "Normal", "Large", "Extra large" }); fontPick.SelectedIndex = uiFontSize < 9.5f ? 0 : uiFontSize < 11f ? 1 : uiFontSize < 13f ? 2 : 3;
         fontPick.SelectedIndexChanged += delegate { float next = new float[] { 9f, 10f, 12f, 14f }[fontPick.SelectedIndex]; Theme.ScaleFonts(this, next / uiFontSize); uiFontSize = next; Theme.FontScale = next / 9f; RefreshTasks(); RefreshStats(); Save(); };
-        var minimizeCheck = new CheckBox { Left = 10, Top = 240, Width = 500, Height = 26, Text = "Minimize Study Tracker while the reading timer is running", Checked = minimizeDuringTimer };
+        var minimizeCheck = new SwitchBox { Left = 10, Top = 240, Width = 500, Height = 26, Text = "Minimize Study Tracker while the reading timer is running", Checked = minimizeDuringTimer };
         minimizeCheck.CheckedChanged += delegate { minimizeDuringTimer = minimizeCheck.Checked; Save(); };
-        var statsCheck = new CheckBox { Left = 10, Top = 272, Width = 820, Height = 26, Visible = Updater.StatsCode.Length > 0, Checked = statsOptIn,
+        var statsCheck = new SwitchBox { Left = 10, Top = 272, Width = 820, Height = 26, Visible = Updater.StatsCode.Length > 0, Checked = statsOptIn,
             Text = "Share an anonymous daily usage count (no personal data)" };
         statsCheck.CheckedChanged += delegate { statsOptIn = statsCheck.Checked; statsAsked = true; Save(); if (statsOptIn) StatsPing(); RefreshUsers(); };
         var remHead = new Label { Left = 10, Top = 310, Width = 400, Height = 28, Text = "Reminders", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
-        var remDailyCheck = new CheckBox { Left = 10, Top = 346, Width = 230, Height = 26, Text = "Daily study reminder at", Checked = remDaily };
+        var remDailyCheck = new SwitchBox { Left = 10, Top = 346, Width = 230, Height = 26, Text = "Daily study reminder at", Checked = remDaily };
         var remTimeStep = new Stepper { Left = 244, Top = 341, Width = 150, Clock = true, Step = 15, Value = remHour * 60 + remMinute };   // shows e.g. 18:15
-        var remBreakCheck = new CheckBox { Left = 10, Top = 386, Width = 230, Height = 26, Text = "Break reminder every", Checked = remBreak };
+        var remBreakCheck = new SwitchBox { Left = 10, Top = 386, Width = 230, Height = 26, Text = "Break reminder every", Checked = remBreak };
         var remBreakStep = new Stepper { Left = 244, Top = 381, Width = 130, Min = 15, Max = 180, Step = 5, Suffix = "min", Value = remBreakMin };
         var remBreakNote = new Label { Left = 384, Top = 390, Width = 380, Height = 22, Tag = "muted", Text = "while a timer is running" };
-        var remTrayCheck = new CheckBox { Left = 10, Top = 426, Width = 820, Height = 26, Text = "Keep Study Tracker running in the tray when I close the window (needed for reminders)", Checked = remTray };
+        var remTrayCheck = new SwitchBox { Left = 10, Top = 426, Width = 820, Height = 26, Text = "Keep Study Tracker running in the tray when I close the window (needed for reminders)", Checked = remTray };
         Action remSave = delegate
         {
             remDaily = remDailyCheck.Checked; remHour = remTimeStep.Value / 60; remMinute = remTimeStep.Value % 60; remBreak = remBreakCheck.Checked;
@@ -1445,13 +1738,17 @@ class MainForm : Form
         lblVer = new Label { Left = 10, Top = y0 + 34, Width = 700, Height = 26, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold) };
         lblUpdInfo = new Label { Left = 10, Top = y0 + 62, Width = 800, Height = 24, Tag = "muted" };
         lblUpdStatus = new Label { Left = 10, Top = y0 + 90, Width = 820, Height = 28, Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), Tag = "white" };
-        bCheck = Theme.Btn("Check for updates", 10, y0 + 126, 180, "a"); bCheck.Height = 38;
-        bInstall = Theme.Btn("Install update now", 200, y0 + 126, 190, "c"); bInstall.Height = 38; bInstall.Visible = false;   // same row, same height, right next to Check
+        bCheck = Theme.Btn("Check for updates", 10, y0 + 126, 180, "a"); bCheck.Height = 38; ((PillButton)bCheck).Icon = "refresh";
+        bInstall = Theme.Btn("Install update now", 200, y0 + 126, 190, "c"); bInstall.Height = 38; ((PillButton)bInstall).Icon = "download"; bInstall.Visible = false;   // same row, same height, right next to Check
         prog = new ProgressBar { Left = 404, Top = y0 + 139, Width = 260, Height = 12, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 30, Visible = false };
-        rbAuto = new RadioButton { Left = 10, Top = y0 + 180, Width = 820, Height = 26, Text = "Automatic updates", Checked = autoMode };
-        rbManual = new RadioButton { Left = 10, Top = y0 + 208, Width = 820, Height = 26, Text = "Notify me; let me install updates", Checked = !autoMode };
+        var updRow = new FlowLayoutPanel { Left = 10, Top = y0 + 126, Width = 840, Height = 40, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };   // both buttons live in one row, so they always line up
+        bCheck.Width = 190; bInstall.Width = 190; bCheck.Height = 38; bInstall.Height = 38;
+        bCheck.Margin = new Padding(0, 0, 10, 0); bInstall.Margin = new Padding(0, 0, 16, 0); prog.Margin = new Padding(0, 13, 0, 0); prog.Width = 260; prog.Height = 12;
+        updRow.Controls.Add(bCheck); updRow.Controls.Add(bInstall); updRow.Controls.Add(prog);
+        rbAuto = new RadioBox { Left = 10, Top = y0 + 180, Width = 820, Height = 26, Text = "Automatic updates", Checked = autoMode };
+        rbManual = new RadioBox { Left = 10, Top = y0 + 208, Width = 820, Height = 26, Text = "Notify me; let me install updates", Checked = !autoMode };
         var note = new Label { Left = 10, Top = y0 + 242, Width = 820, Height = 24, Tag = "muted", Text = "Your study data stays on this computer during updates." };
-        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, minimizeCheck, statsCheck, remHead, remDailyCheck, remTimeStep, remBreakCheck, remBreakStep, remBreakNote, remTrayCheck, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, bCheck, bInstall, prog, rbAuto, rbManual, note });
+        p.Controls.AddRange(new Control[] { title, appearance, nameLabel, nameBox, saveName, themeLabel, themePick, colorPick, familyLabel, familyPick, fontLabel, fontPick, minimizeCheck, statsCheck, remHead, remDailyCheck, remTimeStep, remBreakCheck, remBreakStep, remBreakNote, remTrayCheck, updatesHead, lblVer, lblUpdInfo, lblUpdStatus, updRow, rbAuto, rbManual, note });
         bCheck.Click += delegate { CheckNow(true); };
         bInstall.Click += delegate { InstallUpdate(false); };
         rbAuto.CheckedChanged += delegate { autoMode = rbAuto.Checked; Save(); };
@@ -1521,6 +1818,27 @@ class MainForm : Form
             Ui(delegate { statsBusy = false; if (installOk) installSent = true; if (ok) lastPing = DateTime.UtcNow; Save(); RefreshUsers(); });
         });
     }
+    int SlotState(Slot sl)   // 1 = done (enough minutes logged for that subject that day), 2 = missed (day has passed), 0 = still to come
+    {
+        DateTime mon = DateTime.Today.AddDays(-(((int)DateTime.Today.DayOfWeek + 6) % 7)), date = mon.AddDays(sl.Day); string k = Key(date);
+        int done = sessions.Where(x => x.Date == k && x.Subject == sl.Subject).Sum(x => x.Minutes);
+        return done >= Math.Max(5, sl.Minutes) ? 1 : (date < DateTime.Today ? 2 : 0);
+    }
+    void AddSlot(int day) { EditSlotCore(new Slot { Day = day, Subject = selTask != null ? selTask.Title : "", Minutes = 45 }, false); }
+    void EditSlot(Slot sl) { EditSlotCore(sl, true); }
+    void EditSlotCore(Slot sl, bool exists)
+    {
+        string[] dn = { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" };
+        var subjects = tasks.Select(t => t.Title).Concat(slots.Select(x => x.Subject)).Distinct().ToList();
+        using (var f = new SlotForm(dn[sl.Day], sl, subjects, exists))
+        {
+            if (f.ShowDialog(this) != DialogResult.OK) return;
+            if (f.Deleted) slots.Remove(sl);
+            else { sl.Time = f.Result.Time; sl.Minutes = f.Result.Minutes; sl.Subject = f.Result.Subject; if (!exists) slots.Add(sl); }
+            Save(); chart.Invalidate();
+        }
+    }
+
     // ---------- reminders ----------
     void InitReminders()
     {
@@ -1556,8 +1874,9 @@ class MainForm : Form
         if (remDaily && lastDaily != today && now >= at && now < at.AddHours(3))   // fires once a day, up to 3 h after the chosen time
         {
             lastDaily = today; Save(); int todo = tasks.Count(x => !x.Done);
+            var tp = slots.Where(x => x.Day == ((int)now.DayOfWeek + 6) % 7).OrderBy(x => x.Time).Select(x => x.Time + " " + x.Subject).ToList();
             Notify("Time to study" + (string.IsNullOrEmpty(userName) ? "" : ", " + userName) + "!",
-                todo > 0 ? "You have " + todo + " task(s) to do. A short session now keeps your streak going." : "Add a topic and start a focus session to keep your streak going.");
+                (todo > 0 ? "You have " + todo + " task(s) to do. A short session now keeps your streak going." : "Add a topic and start a focus session to keep your streak going.") + (tp.Count > 0 ? " Planned today: " + string.Join(", ", tp.ToArray()) + "." : ""));
         }
         bool timing = (mini != null && !mini.IsDisposed) || frunning;
         if (remBreak && timing) { breakAcc += 0.5; if (breakAcc >= remBreakMin) { breakAcc = 0; Notify("Take a short break", "You have been studying for a while. Stretch, drink some water and rest your eyes."); } }
