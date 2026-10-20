@@ -218,22 +218,20 @@ class PillButton : Button   // compact Windows-style button with crisp edges, su
     protected override void OnMouseDown(MouseEventArgs e) { down = true; Invalidate(); base.OnMouseDown(e); }
     protected override void OnMouseUp(MouseEventArgs e) { down = false; Invalidate(); base.OnMouseUp(e); }
     protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
-    protected override void OnPaintBackground(PaintEventArgs e)
+    protected override void OnSizeChanged(EventArgs e)
     {
-        var host = Parent as Panel;
-        if (host != null && (host.Tag as string) == "banner") Theme.PaintParent(this, e);   // gradient banner: show the gradient behind the corners
-        else e.Graphics.Clear(Theme.BackBehind(this));                                       // everywhere else: the solid colour behind (page, card or window)
+        base.OnSizeChanged(e);
+        if (Width > 4 && Height > 4) using (var gp = Theme.Round(new Rectangle(0, 0, Width, Height), 6)) Region = new Region(gp);   // rounded corners by clipping: no blending with the background, so no stray dark pixels
     }
+    protected override void OnPaintBackground(PaintEventArgs e) { }   // everything inside the rounded shape is painted in OnPaint
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; Color fill = BackColor;
         if (!Enabled) fill = Theme.Mix(fill, Theme.Bg, 0.55);
         else if (down) fill = FlatAppearance.MouseDownBackColor.IsEmpty ? Theme.Mix(fill, Color.Black, 0.16) : FlatAppearance.MouseDownBackColor;
         else if (hover) fill = FlatAppearance.MouseOverBackColor.IsEmpty ? Theme.Mix(fill, Theme.Dark ? Color.White : Color.Black, Theme.Dark ? 0.12 : 0.07) : FlatAppearance.MouseOverBackColor;
-        // Flat button like version 6.1: one solid fill with softly rounded corners, no outline of any colour.
-        // The fill covers the whole control, so there is no uncovered strip at the right or bottom edge.
-        var r = new Rectangle(0, 0, Width, Height);
-        using (var gp = Theme.Round(r, Math.Max(2, Math.Min(8, Math.Min(Width, Height) / 3)))) using (var br = new SolidBrush(fill)) g.FillPath(br, gp);
+        // Flat button like version 6.1: one solid opaque fill, no outline of any colour (the rounded corners come from the control's Region).
+        g.Clear(fill);
         Color fg = Enabled ? ForeColor : Theme.Muted; int ic = string.IsNullOrEmpty(Icon) ? 0 : 16, gap = ic > 0 ? 7 : 0;
         int tw = TextRenderer.MeasureText(g, Text, Font, new Size(Width, Height), TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine).Width;
         int x0 = Math.Max(6, (Width - (ic + gap + tw)) / 2);
@@ -434,7 +432,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "6.10";
+    public const string Version = "6.11";
     // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
     // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
     public static string StatsCode = "3mkayderado";
