@@ -432,7 +432,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "6.11";
+    public const string Version = "6.12";
     // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
     // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
     public static string StatsCode = "3mkayderado";
@@ -945,7 +945,7 @@ class MainForm : Form
     string dataFile, root = "", userName = ""; int goal = 60, cur = 0, homeFilter = 0; float uiFontSize = 9f; string uiFontFamily = "Segoe UI"; bool loading = true, muted = false, onboardingDone = false, minimizeDuringTimer = true; int scanGeneration = 0;
     List<StudyTask> tasks = new List<StudyTask>(); List<Sess> sessions = new List<Sess>(); List<string[]> index = new List<string[]>();
     Panel banner, content; Panel[] pages = new Panel[PAGES]; Button[] nav = new Button[PAGES]; PictureBox pic; Button bDark, bPal;
-    string examName = "", examDate = "", lastSummary = "", lastDaily = ""; bool remDaily, remBreak, remTray, exiting, trayHinted; int remHour = 18, remMinute = 0, remBreakMin = 45; double breakAcc; NotifyIcon tray; Timer remTimer; Dictionary<string, BookProg> books = new Dictionary<string, BookProg>(); string newDue = ""; Button bDue; List<Slot> slots = new List<Slot>();
+    string examName = "", examDate = "", lastSummary = "", lastDaily = ""; bool remDaily, remBreak, remTray, exiting, trayHinted; int remHour = 18, remMinute = 0, remBreakMin = 45; double breakAcc; NotifyIcon tray; Timer remTimer; Dictionary<string, BookProg> books = new Dictionary<string, BookProg>(); string newDue = ""; Button bDue; List<int> quoteBag = new List<int>(); int lastQuote = -1; Random qrnd = new Random(); Timer quoteTimer; List<Slot> slots = new List<Slot>();
     bool statsOptIn = true, statsAsked, installSent, statsBusy; Label lblUsers; Timer usersTimer; string uWeek, uMonth, uTotal; int usersTick; DateTime lastPing = DateTime.MinValue; bool updateAvailable, blink, busy, autoMode = true; DateTime stamp = DateTime.MinValue, lastCheck = DateTime.MinValue, latest = DateTime.MinValue;
     Timer dotTimer, hourTimer; Label lblVer, lblUpdInfo, lblUpdStatus; Button bCheck, bInstall; ProgressBar prog; RadioButton rbAuto, rbManual;
     TextBox txtTitle; Stepper numTarget; FlowLayoutPanel taskFlow, homeFlow; Card homeSum; Button[] homeFilters = new Button[3]; StudyTask selTask; Label lblPlanSummary; Label lblDayInfo; ListBox lbDay; DateTime selDay = DateTime.Today; Label lblStatus, lblHello, lblQuote, lblInst; MiniTimer mini; StudyTask miniTask;
@@ -955,8 +955,59 @@ class MainForm : Form
     int fleft = 25 * 60, ftotal = 25 * 60, focusCount; string fmode = "focus"; bool frunning; Timer fTimer; Button bFocus, bShort, bLong;
     // streak calendar
     Panel heat; DateTime viewMonth; Label lblStreak; Button bPrev, bNext, bThisMonth;
-    string[] quotes = { "Small steps every day add up.", "Read ahead, stay ahead.", "Future doctor in the making!", "Consistency beats cramming.", "One more page. You've got this!",
-        "You're doing amazing, keep going!", "Glow up your grades, one page at a time.", "Rest is part of studying too." };
+    string[] quotes =
+    {
+        "You\u2019re doing amazing, keep going!",
+        "Every study session counts!",
+        "Small steps lead to big results.",
+        "You've got this! Focus and conquer.",
+        "Your hard work will pay off.",
+        "Stay focused, stay driven!",
+        "One page at a time, you're making progress.",
+        "Make today count!",
+        "Believe in yourself and keep pushing.",
+        "Great things take time and effort.",
+        "Focus on the goal, not the obstacle.",
+        "Consistency is your superpower!",
+        "Stay disciplined, achieve greatness.",
+        "Clear your mind and let's get to work.",
+        "Elimination of distraction starts now.",
+        "Push through\u2014future you will thank you!",
+        "Deep work mode: ON.",
+        "Silence the noise, focus on the page.",
+        "Success is built on daily habits.",
+        "Lock in and make it happen today!",
+        "Ready to level up your knowledge?",
+        "Let\u2019s make today productive!",
+        "Turn your ambition into action!",
+        "Fuel your future with every topic you cover.",
+        "Be unstoppable today!",
+        "Energy flows where focus goes.",
+        "Knowledge is power\u2014go get it!",
+        "Start strong, finish stronger!",
+        "Master the material, master your craft.",
+        "Let\u2019s crush today\u2019s study goals!",
+        "Mistakes are proof that you are trying.",
+        "Learn something new today!",
+        "Challenge yourself to go one step further.",
+        "Progress, not perfection!",
+        "The expert in anything was once a beginner.",
+        "Growth happens outside of your comfort zone.",
+        "Every line you read brings you closer to success.",
+        "Invest in your mind today.",
+        "You are capable of amazing things!",
+        "Curiosity fuels success.",
+        "Take a breath and take the next step.",
+        "Today is a fresh opportunity to excel.",
+        "Be proud of every effort you make.",
+        "Keep your eyes on the prize!",
+        "You are closer than you were yesterday.",
+        "Turn studying into your success story.",
+        "Step by step, goal by goal.",
+        "Trust the process and stay dedicated.",
+        "Make yourself proud today!",
+        "Time spent studying is never wasted.",
+    };
 
     static string Today() { return DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); }
     static string Key(DateTime d) { return d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); }
@@ -1043,10 +1094,21 @@ class MainForm : Form
         bPal.Click += delegate { Theme.Apply(Theme.Dark, Theme.Pal + 1); Recolor(); };
         banner.Controls.AddRange(new Control[] { pic, lblHello, lblQuote, bName, bDark, bPal }); Controls.Add(banner);
     }
+    void NextQuote()   // shuffled "bag": every statement is shown once before any of them repeats
+    {
+        if (lblQuote == null || busy) return;   // busy = an update is being checked/installed and may be using this line
+        if (quoteBag.Count == 0)
+        {
+            for (int i = 0; i < quotes.Length; i++) quoteBag.Add(i);
+            for (int i = quoteBag.Count - 1; i > 0; i--) { int j = qrnd.Next(i + 1); int t = quoteBag[i]; quoteBag[i] = quoteBag[j]; quoteBag[j] = t; }
+            if (quoteBag.Count > 1 && quoteBag[quoteBag.Count - 1] == lastQuote) { int t = quoteBag[0]; quoteBag[0] = quoteBag[quoteBag.Count - 1]; quoteBag[quoteBag.Count - 1] = t; }
+        }
+        int k = quoteBag[quoteBag.Count - 1]; quoteBag.RemoveAt(quoteBag.Count - 1); lastQuote = k; lblQuote.Text = quotes[k];
+    }
     void Greet()
     {
         int h = DateTime.Now.Hour; string g = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
-        lblHello.Text = g + ", " + (userName == "" ? "friend" : userName) + "!"; lblQuote.Text = quotes[DateTime.Today.DayOfYear % quotes.Length];
+        lblHello.Text = g + ", " + (userName == "" ? "friend" : userName) + "!"; if (string.IsNullOrEmpty(lblQuote.Text) || lblQuote.Text.StartsWith("Updating")) NextQuote();
     }
 
     // ---------- data ----------
@@ -1764,6 +1826,7 @@ class MainForm : Form
     {
         dotTimer = new Timer { Interval = 500 }; dotTimer.Tick += delegate { blink = !blink; if (updateAvailable) nav[PAGE_SETTINGS].Invalidate(); }; dotTimer.Start();
         hourTimer = new Timer { Interval = 3600000 }; hourTimer.Tick += delegate { AutoCheck(); }; hourTimer.Start(); InitReminders();
+        quoteTimer = new Timer { Interval = 45000 }; quoteTimer.Tick += delegate { NextQuote(); }; quoteTimer.Start();   // new motivation line every 45 seconds
         // also check immediately when internet (re)connects — still at most once per calendar day
         NetworkChange.NetworkAvailabilityChanged += delegate { Ui(delegate { AutoCheck(); }); };
     }
