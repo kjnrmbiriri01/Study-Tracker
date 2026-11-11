@@ -173,6 +173,48 @@ static class Theme
 }
 
 // ===== Rounded, bordered card panel (site-style) =====
+// ===== Right-click menus that follow the theme and the Windows version =====
+static class MenuStyle
+{
+    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
+    static int build = -1;
+    public static bool Win11   // read from the registry: Environment.OSVersion reports Windows 8 for apps without a manifest
+    {
+        get
+        {
+            if (build < 0)
+            {
+                try { build = int.Parse(Convert.ToString(Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "CurrentBuildNumber", "0"))); } catch { build = 0; }
+            }
+            return build >= 22000;
+        }
+    }
+    public static void Apply(ContextMenuStrip m)   // call after the items have been added
+    {
+        m.Renderer = new FluentRenderer(); m.ShowImageMargin = false; m.ShowCheckMargin = false; m.Font = new Font("Segoe UI", 9.5f);
+        m.Padding = Win11 ? new Padding(4) : new Padding(0, 2, 0, 2);
+        foreach (ToolStripItem it in m.Items) if (!(it is ToolStripSeparator)) it.Padding = Win11 ? new Padding(10, 6, 10, 6) : new Padding(8, 3, 8, 3);
+        if (Win11) m.HandleCreated += delegate { try { int v = 2; DwmSetWindowAttribute(m.Handle, 33, ref v, 4); } catch { } };   // rounded window corners (Windows 11)
+    }
+}
+
+class FluentRenderer : ToolStripProfessionalRenderer
+{
+    public FluentRenderer() : base(new ProfessionalColorTable()) { RoundedEdges = false; }
+    protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e) { using (var b = new SolidBrush(Theme.Card)) e.Graphics.FillRectangle(b, e.AffectedBounds); }
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) { using (var p = new Pen(Theme.Border)) e.Graphics.DrawRectangle(p, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1); }
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+    {
+        var it = e.Item; if (!it.Selected || !it.Enabled) return;
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; Color c = Theme.Mix(Theme.Card, Theme.Text, Theme.Dark ? 0.12 : 0.07);
+        if (MenuStyle.Win11) { var r = new Rectangle(4, 1, it.Width - 8, it.Height - 2); using (var gp = Theme.Round(r, 8)) using (var b = new SolidBrush(c)) g.FillPath(b, gp); }   // rounded highlight
+        else using (var b = new SolidBrush(c)) g.FillRectangle(b, 0, 0, it.Width, it.Height);                                                                                // flat highlight (Windows 10)
+    }
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) { e.TextColor = e.Item.Enabled ? Theme.Text : Theme.Muted; base.OnRenderItemText(e); }
+    protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e) { using (var p = new Pen(Theme.Border)) { int y = e.Item.Height / 2; e.Graphics.DrawLine(p, 8, y, e.Item.Width - 8, y); } }
+    protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e) { e.ArrowColor = Theme.Text; base.OnRenderArrow(e); }
+}
+
 // ===== Windows 11 style controls =====
 static class Icons   // simple vector icons drawn in the text colour (no icon font needed)
 {
@@ -331,12 +373,12 @@ static class Installer
     {
         var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
         if (string.IsNullOrEmpty(pf)) pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        return Path.Combine(pf, "Study Tracker");
+        return Path.Combine(pf, "Study Tracker PC");
     }
     static bool Same(string a, string b) { return string.Equals(Path.GetFullPath(a).TrimEnd('\\'), Path.GetFullPath(b).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase); }
     public static bool RunningInstalled() { var d = InstallDir(); return d != null && Same(d, App.ExeDir); }
-    static string DesktopLnk() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Study Tracker.lnk"); }
-    static string MenuDir() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Study Tracker"); }
+    static string DesktopLnk() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Study Tracker PC.lnk"); }
+    static string MenuDir() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Study Tracker PC"); }
 
     static void MakeIco(string path)
     {
@@ -356,7 +398,7 @@ static class Installer
         object l = t.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, sh, new object[] { lnk }); Type lt = l.GetType();
         lt.InvokeMember("TargetPath", BindingFlags.SetProperty, null, l, new object[] { target });
         lt.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, l, new object[] { Path.GetDirectoryName(target) });
-        lt.InvokeMember("Description", BindingFlags.SetProperty, null, l, new object[] { "Study Tracker by 3Mkay Derado" });
+        lt.InvokeMember("Description", BindingFlags.SetProperty, null, l, new object[] { "Study Tracker PC by 3Mkay Derado" });
         lt.InvokeMember("IconLocation", BindingFlags.SetProperty, null, l, new object[] { icon });
         lt.InvokeMember("Save", BindingFlags.InvokeMethod, null, l, null);
     }
@@ -378,6 +420,11 @@ static class Installer
         catch { return false; }
     }
 
+    static void RemoveOldShortcuts()   // shortcuts created before the app was renamed to "Study Tracker PC"
+    {
+        try { File.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Study Tracker.lnk")); } catch { }
+        try { string om = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Study Tracker"); File.Delete(Path.Combine(om, "Study Tracker.lnk")); Directory.Delete(om); } catch { }
+    }
     public static bool Install(string dir, bool desk, bool menu, out string err)
     {
         err = null; string src = Application.ExecutablePath, exe = Path.Combine(dir, "StudyTracker.exe"), ico = Path.Combine(dir, "StudyTracker.ico");
@@ -398,13 +445,13 @@ static class Installer
         using (var k = Registry.CurrentUser.CreateSubKey(Key)) k.SetValue("InstallDir", dir);
         using (var k = Registry.CurrentUser.CreateSubKey(Unin))
         {
-            k.SetValue("DisplayName", "Study Tracker"); k.SetValue("Publisher", "3Mkay Derado"); k.SetValue("InstallLocation", dir);
+            k.SetValue("DisplayName", "Study Tracker PC"); k.SetValue("Publisher", "3Mkay Derado"); k.SetValue("InstallLocation", dir);
             k.SetValue("DisplayIcon", ico); k.SetValue("UninstallString", "\"" + exe + "\" /uninstall"); k.SetValue("NoModify", 1); k.SetValue("NoRepair", 1);
         }
         try
         {
-            if (desk) Shortcut(DesktopLnk(), exe, ico);
-            if (menu) { Directory.CreateDirectory(MenuDir()); Shortcut(Path.Combine(MenuDir(), "Study Tracker.lnk"), exe, ico); }
+            RemoveOldShortcuts(); if (desk) Shortcut(DesktopLnk(), exe, ico);
+            if (menu) { Directory.CreateDirectory(MenuDir()); Shortcut(Path.Combine(MenuDir(), "Study Tracker PC.lnk"), exe, ico); }
         }
         catch (Exception e) { err = "Installed, but a shortcut could not be created: " + e.Message; }
         return true;
@@ -413,18 +460,19 @@ static class Installer
     public static bool Uninstall(IWin32Window owner)
     {
         string dir = InstallDir();
-        if (dir == null || !Same(dir, App.ExeDir)) { MessageBox.Show(owner, "Study Tracker is not installed (you are running it without installing), so there is nothing to uninstall.", "Uninstall"); return false; }
-        if (MessageBox.Show(owner, "Remove Study Tracker and its shortcuts from this computer?", "Uninstall", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+        if (dir == null || !Same(dir, App.ExeDir)) { MessageBox.Show(owner, "Study Tracker PC is not installed (you are running it without installing), so there is nothing to uninstall.", "Uninstall"); return false; }
+        if (MessageBox.Show(owner, "Remove Study Tracker PC and its shortcuts from this computer?", "Uninstall", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
         bool wipe = MessageBox.Show(owner, "Also delete your saved study data (tasks and history)?\n\nChoose No to keep it in case you reinstall.", "Uninstall", MessageBoxButtons.YesNo) == DialogResult.Yes;
         try { File.Delete(DesktopLnk()); } catch { }
-        try { File.Delete(Path.Combine(MenuDir(), "Study Tracker.lnk")); Directory.Delete(MenuDir()); } catch { }
+        try { File.Delete(Path.Combine(MenuDir(), "Study Tracker PC.lnk")); Directory.Delete(MenuDir()); } catch { }
+        RemoveOldShortcuts();
         try { Registry.CurrentUser.DeleteSubKeyTree(Unin, false); Registry.CurrentUser.DeleteSubKeyTree(Key, false); } catch { }
         if (wipe) { try { Directory.Delete(App.DataDir, true); } catch { } }
         var l = new List<string> { "ping 127.0.0.1 -n 3 >nul",
             "del /f /q \"" + Path.Combine(dir, "StudyTracker.exe") + "\"", "del /f /q \"" + Path.Combine(dir, "StudyTracker.ico") + "\"",
             "del /f /q \"" + Path.Combine(dir, "logo.png") + "\"", "rmdir \"" + dir + "\"" };
         RunBat(l, !CanWrite(dir), false);
-        MessageBox.Show(owner, "Study Tracker has been uninstalled. Thanks for using it!", "Uninstall");
+        MessageBox.Show(owner, "Study Tracker PC has been uninstalled. Thanks for using it!", "Uninstall");
         return true;
     }
 }
@@ -432,7 +480,7 @@ static class Installer
 // ===== GitHub updater: checks the last commit date, downloads the repo zip to a temp folder, builds/installs, cleans up =====
 static class Updater
 {
-    public const string Version = "6.12";
+    public const string Version = "6.14";
     // Optional anonymous usage count via GoatCounter. Leave empty to disable everything.
     // Put your free GoatCounter site code here, e.g. "studytracker" for https://studytracker.goatcounter.com
     public static string StatsCode = "3mkayderado";
@@ -443,7 +491,7 @@ static class Updater
         try
         {
             try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; } catch { }
-            var req = (HttpWebRequest)WebRequest.Create("https://" + StatsCode + ".goatcounter.com/count?p=" + Uri.EscapeDataString(path) + "&t=" + Uri.EscapeDataString("Study Tracker v" + Version) + "&rnd=" + DateTime.UtcNow.Ticks);
+            var req = (HttpWebRequest)WebRequest.Create("https://" + StatsCode + ".goatcounter.com/count?p=" + Uri.EscapeDataString(path) + "&t=" + Uri.EscapeDataString("Study Tracker PC v" + Version) + "&rnd=" + DateTime.UtcNow.Ticks);
             req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) StudyTracker/" + Version;   // identifies the app, but looks like a normal client so it is not treated as a crawler
             req.Accept = "image/gif,image/*;q=0.8"; req.Headers[HttpRequestHeader.AcceptLanguage] = "en"; req.Timeout = 8000; req.ReadWriteTimeout = 8000;
             using (var r = (HttpWebResponse)req.GetResponse())
@@ -551,15 +599,15 @@ class SetupForm : Form
     public int Choice; public string Dir; public bool Desk = true, StartMenu = true;
     public SetupForm()
     {
-        Text = "Study Tracker Setup"; ClientSize = new Size(600, 400); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
+        Text = "Study Tracker PC Setup"; ClientSize = new Size(600, 400); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen; Font = new Font("Segoe UI", 9); BackColor = Theme.Bg;
         var ban = new Panel { Dock = DockStyle.Top, Height = 90, Tag = "banner" };
         ban.Paint += (s, e) => { using (var gb = new LinearGradientBrush(ban.ClientRectangle, Theme.Base, Theme.Accent, 0f)) e.Graphics.FillRectangle(gb, ban.ClientRectangle); };
         var pic = new PictureBox { Left = 18, Top = 15, Width = 60, Height = 60, Image = Theme.Logo(60), BackColor = Color.Transparent };
-        var h = new Label { Left = 92, Top = 16, Width = 480, Height = 34, Text = "Welcome to Study Tracker", Font = new Font("Segoe UI", 15, FontStyle.Bold), Tag = "white", ForeColor = Color.White };
+        var h = new Label { Left = 92, Top = 16, Width = 480, Height = 34, Text = "Welcome to Study Tracker PC", Font = new Font("Segoe UI", 15, FontStyle.Bold), Tag = "white", ForeColor = Color.White };
         var h2 = new Label { Left = 94, Top = 54, Width = 480, Height = 24, Text = "Created by 3Mkay Derado", Tag = "white", ForeColor = Color.FromArgb(210, 245, 240) };
         ban.Controls.AddRange(new Control[] { pic, h, h2 });
-        var l1 = new Label { Left = 24, Top = 110, Width = 550, Height = 24, Text = "Where should Study Tracker be installed?", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
+        var l1 = new Label { Left = 24, Top = 110, Width = 550, Height = 24, Text = "Where should Study Tracker PC be installed?", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
         var tb = new TextBox { Left = 24, Top = 140, Width = 440, Text = Installer.DefaultDir() };
         var br2 = Theme.Btn("Browse...", 474, 137, 100, "c");
         var cd = new SwitchBox { Left = 24, Top = 192, Width = 400, Text = "Create a desktop shortcut", Checked = true };
@@ -572,7 +620,7 @@ class SetupForm : Form
         br2.Click += delegate
         {
             using (var f = new FolderBrowserDialog())
-            { f.Description = "Choose the folder to install into"; if (f.ShowDialog() == DialogResult.OK) { string p = f.SelectedPath; tb.Text = p.ToLower().Contains("study tracker") ? p : Path.Combine(p, "Study Tracker"); } }
+            { f.Description = "Choose the folder to install into"; if (f.ShowDialog() == DialogResult.OK) { string p = f.SelectedPath; tb.Text = p.ToLower().Contains("study tracker") ? p : Path.Combine(p, "Study Tracker PC"); } }
         };
         bi.Click += delegate { if (tb.Text.Trim() == "") return; Dir = tb.Text.Trim(); Desk = cd.Checked; StartMenu = cm.Checked; Choice = 1; Close(); };
         br.Click += delegate { Choice = 2; Close(); }; bc.Click += delegate { Choice = 0; Close(); };
@@ -1015,7 +1063,7 @@ class MainForm : Form
 
     public MainForm()
     {
-        Text = "Study Tracker"; Width = 980; Height = 720; MinimumSize = new Size(880, 640); Font = new Font("Segoe UI", 9); StartPosition = FormStartPosition.CenterScreen;
+        Text = "Study Tracker PC"; Width = 980; Height = 720; MinimumSize = new Size(880, 640); Font = new Font("Segoe UI", 9); StartPosition = FormStartPosition.CenterScreen;
         dataFile = Path.Combine(App.DataDir, "study_data.txt"); bool dark = true; int pal = 0; Load_(ref dark, ref pal); if (!statsAsked) statsOptIn = true; Theme.Apply(dark, pal);
         viewMonth = DateTime.Today;
         try { Icon = Icon.FromHandle(Theme.Logo(64).GetHicon()); } catch { }
@@ -1033,7 +1081,7 @@ class MainForm : Form
             if (userName == "") { var n = Prompt("Welcome!", "Hi! What should we call you?", ""); userName = string.IsNullOrWhiteSpace(n) ? "Student" : n.Trim(); Save(); Greet(); }
             if (!onboardingDone)
             {
-                var answer = MessageBox.Show("STEP 1 OF 3 — YOUR NOTES\n\nDo you have one main folder that contains your study notes, PDFs, books, and lecture files?\n\nChoose Yes to select it now, or No to set it up later in Find Files.", "Welcome to Study Tracker", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information);
+                var answer = MessageBox.Show("STEP 1 OF 3 — YOUR NOTES\n\nDo you have one main folder that contains your study notes, PDFs, books, and lecture files?\n\nChoose Yes to select it now, or No to set it up later in Find Files.", "Welcome to Study Tracker PC", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information);
                 if (answer == DialogResult.Cancel) { onboardingDone = true; Save(); }
                 else
                 {
@@ -1041,7 +1089,7 @@ class MainForm : Form
                     {
                         using (var f = new FolderBrowserDialog())
                         {
-                            f.Description = "Choose your main study-notes folder. Study Tracker will index file names for searching; it will not move or change your files.";
+                            f.Description = "Choose your main study-notes folder. Study Tracker PC will index file names for searching; it will not move or change your files.";
                             f.ShowNewFolderButton = false;
                             if (f.ShowDialog(this) == DialogResult.OK) { root = f.SelectedPath; Save(); Scan(); }
                         }
@@ -1213,6 +1261,7 @@ class MainForm : Form
         var m = new ContextMenuStrip();
         m.Items.Add("Set due date...", null, delegate { string d = AskDate("Due date", t.Title, t.Due); if (d != null) { t.Due = d; Save(); RefreshTasks(); RefreshHome(); } });
         m.Items.Add("Clear due date", null, delegate { t.Due = ""; Save(); RefreshTasks(); RefreshHome(); });
+        MenuStyle.Apply(m);
         return m;
     }
     string ExamText()
@@ -1611,9 +1660,17 @@ class MainForm : Form
         };
         lvFiles.DoubleClick += delegate { OpenFirst(); }; lvFiles.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OpenFirst(); };
         var menu = new ContextMenuStrip(); menu.Items.Add("Open", null, delegate { OpenFirst(); });
+        menu.Items.Add("Open with...", null, delegate
+        {
+            if (lvFiles.SelectedItems.Count == 0) return;
+            try { Process.Start("rundll32.exe", "shell32.dll,OpenAs_RunDLL \"" + (string)lvFiles.SelectedItems[0].Tag + "\""); }   // Windows' own "Open with" window
+            catch (Exception ex) { MessageBox.Show(ex.Message); }
+        });
         menu.Items.Add("Show in folder", null, delegate { if (lvFiles.SelectedItems.Count > 0) Process.Start("explorer.exe", "/select,\"" + (string)lvFiles.SelectedItems[0].Tag + "\""); });
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Set reading progress...", null, delegate { SetProgress(); });
         menu.Items.Add("Clear progress", null, delegate { if (lvFiles.SelectedItems.Count > 0) { var it = lvFiles.SelectedItems[0]; books.Remove((string)it.Tag); Save(); it.SubItems[1].Text = ""; it.SubItems[2].Text = ""; } });
+        MenuStyle.Apply(menu);
         lvFiles.ContextMenuStrip = menu;
     }
     static List<string[]> WalkFiles(string startDir)
@@ -1728,7 +1785,7 @@ class MainForm : Form
     void BuildAbout(Control p)
     {
         var pb2 = new PictureBox { Left = 10, Top = 10, Width = 130, Height = 130, Image = Theme.Logo(130), BackColor = Color.Transparent };
-        var title = new Label { Left = 160, Top = 12, Width = 600, Height = 46, Text = "Study Tracker", Font = new Font("Segoe UI", 21.5f, FontStyle.Bold), Tag = "title" };
+        var title = new Label { Left = 160, Top = 12, Width = 600, Height = 46, Text = "Study Tracker PC", Font = new Font("Segoe UI", 21.5f, FontStyle.Bold), Tag = "title" };
         var by = new Label { Left = 163, Top = 62, Width = 600, Height = 30, Text = "Created by 3Mkay Derado", Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), Tag = "sub" };
         var desc = new Label { Left = 163, Top = 98, Width = 640, Height = 50, Text = "A free, offline study companion: plan what to read, run Pomodoro focus blocks, track your streaks, and find any note or book in seconds. Version " + Updater.Version };
         var med = new Label { Left = 10, Top = 170, Width = 780, Height = 26, Text = "Need medical lecture notes? Visit MedEduNotes:", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
@@ -1739,7 +1796,7 @@ class MainForm : Form
         contact.LinkClicked += delegate { try { Process.Start(new ProcessStartInfo("mailto:kjnrmbiriri1+studytracker@gmail.com") { UseShellExecute = true }); } catch { MessageBox.Show("Email: kjnrmbiriri1+studytracker@gmail.com", "Contact me"); } };
         var tip = new Label { Left = 10, Top = 302, Width = 800, Height = 44, Tag = "muted", Text = "Tip: put a file named logo.png next to the app to replace the built-in logo. Your study data stays on this computer and never leaves it. Optional network use: the daily update check, and an anonymous daily \"app opened\" count (switch it off any time in Settings)." };
         lblInst = new Label { Left = 10, Top = 352, Width = 800, Height = 24, Tag = "muted", Text = "Installed at: " + (Installer.RunningInstalled() ? App.ExeDir : "not installed (running portable)") };
-        var bun = Theme.Btn("Uninstall Study Tracker", 10, 386, 220, "b"); bun.Height = 36;
+        var bun = Theme.Btn("Uninstall Study Tracker PC", 10, 386, 260, "b"); bun.Height = 36;
         bun.Click += delegate { if (Installer.Uninstall(this)) { loading = true; Environment.Exit(0); } };
         p.Controls.AddRange(new Control[] { pb2, title, by, desc, med, link, contactTitle, contact, tip, lblInst, bun });
     }
@@ -1765,7 +1822,7 @@ class MainForm : Form
         var fontLabel = new Label { Left = 10, Top = 208, Width = 90, Height = 28, Text = "Font size", Tag = "muted" };
         var fontPick = new ComboBox { Left = 105, Top = 204, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList }; fontPick.Items.AddRange(new object[] { "Small", "Normal", "Large", "Extra large" }); fontPick.SelectedIndex = uiFontSize < 9.5f ? 0 : uiFontSize < 11f ? 1 : uiFontSize < 13f ? 2 : 3;
         fontPick.SelectedIndexChanged += delegate { float next = new float[] { 9f, 10f, 12f, 14f }[fontPick.SelectedIndex]; Theme.ScaleFonts(this, next / uiFontSize); uiFontSize = next; Theme.FontScale = next / 9f; RefreshTasks(); RefreshStats(); Save(); };
-        var minimizeCheck = new SwitchBox { Left = 10, Top = 240, Width = 500, Height = 26, Text = "Minimize Study Tracker while the reading timer is running", Checked = minimizeDuringTimer };
+        var minimizeCheck = new SwitchBox { Left = 10, Top = 240, Width = 500, Height = 26, Text = "Minimize Study Tracker PC while the reading timer is running", Checked = minimizeDuringTimer };
         minimizeCheck.CheckedChanged += delegate { minimizeDuringTimer = minimizeCheck.Checked; Save(); };
         var statsCheck = new SwitchBox { Left = 10, Top = 272, Width = 820, Height = 26, Visible = Updater.StatsCode.Length > 0, Checked = statsOptIn,
             Text = "Share an anonymous daily usage count (no personal data)" };
@@ -1776,7 +1833,7 @@ class MainForm : Form
         var remBreakCheck = new SwitchBox { Left = 10, Top = 386, Width = 230, Height = 26, Text = "Break reminder every", Checked = remBreak };
         var remBreakStep = new Stepper { Left = 244, Top = 381, Width = 130, Min = 15, Max = 180, Step = 5, Suffix = "min", Value = remBreakMin };
         var remBreakNote = new Label { Left = 384, Top = 390, Width = 380, Height = 22, Tag = "muted", Text = "while a timer is running" };
-        var remTrayCheck = new SwitchBox { Left = 10, Top = 426, Width = 820, Height = 26, Text = "Keep Study Tracker running in the tray when I close the window (needed for reminders)", Checked = remTray };
+        var remTrayCheck = new SwitchBox { Left = 10, Top = 426, Width = 820, Height = 26, Text = "Keep Study Tracker PC running in the tray when I close the window (needed for reminders)", Checked = remTray };
         Action remSave = delegate
         {
             remDaily = remDailyCheck.Checked; remHour = remTimeStep.Value / 60; remMinute = remTimeStep.Value % 60; remBreak = remBreakCheck.Checked;
@@ -1808,11 +1865,11 @@ class MainForm : Form
     {
         if (lblVer == null) return;
         updateAvailable = latest != DateTime.MinValue && latest > stamp;
-        lblVer.Text = "Study Tracker  v" + Updater.Version;
+        lblVer.Text = "Study Tracker PC  v" + Updater.Version;
         lblUpdInfo.Text = "Version " + Updater.Version + "  •  Last checked: " + Fmt(lastCheck);
         if (updateAvailable) { lblUpdStatus.Text = "An update is available!"; lblUpdStatus.ForeColor = ColorTranslator.FromHtml("#E08A00"); }
         else { lblUpdStatus.Text = latest == DateTime.MinValue ? "Not checked yet. Press \"Check for updates\"." : "You're up to date."; lblUpdStatus.ForeColor = Theme.Accent; }
-        bInstall.Visible = updateAvailable; Text = updateAvailable ? "Study Tracker  -  update available" : "Study Tracker";
+        bInstall.Visible = updateAvailable; Text = updateAvailable ? "Study Tracker PC  -  update available" : "Study Tracker PC";
         if (nav[PAGE_SETTINGS] != null) nav[PAGE_SETTINGS].Invalidate();
     }
     void NavDot(object s, PaintEventArgs e)
@@ -1894,19 +1951,19 @@ class MainForm : Form
     // ---------- reminders ----------
     void InitReminders()
     {
-        tray = new NotifyIcon { Text = "Study Tracker" };
+        tray = new NotifyIcon { Text = "Study Tracker PC" };
         try { tray.Icon = Icon; } catch { }
         var cm = new ContextMenuStrip();
-        cm.Items.Add("Open Study Tracker", null, delegate { ShowFromTray(); });
+        cm.Items.Add("Open Study Tracker PC", null, delegate { ShowFromTray(); });
         cm.Items.Add("Exit", null, delegate { exiting = true; tray.Visible = false; Application.Exit(); });
-        tray.ContextMenuStrip = cm; tray.DoubleClick += delegate { ShowFromTray(); }; tray.BalloonTipClicked += delegate { ShowFromTray(); };
+        MenuStyle.Apply(cm); tray.ContextMenuStrip = cm; tray.DoubleClick += delegate { ShowFromTray(); }; tray.BalloonTipClicked += delegate { ShowFromTray(); };
         remTimer = new Timer { Interval = 30000 }; remTimer.Tick += delegate { ReminderTick(); }; remTimer.Start();
         FormClosing += delegate(object sender, FormClosingEventArgs e)
         {
             if (!exiting && remTray && e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true; Hide(); SyncTray();
-                if (!trayHinted) { trayHinted = true; tray.ShowBalloonTip(3000, "Study Tracker", "Still running here so your reminders keep working.", ToolTipIcon.Info); }
+                if (!trayHinted) { trayHinted = true; tray.ShowBalloonTip(3000, "Study Tracker PC", "Still running here so your reminders keep working.", ToolTipIcon.Info); }
             }
         };
         FormClosed += delegate { try { tray.Visible = false; tray.Dispose(); } catch { } };
@@ -2000,7 +2057,7 @@ class MainForm : Form
         if (busy) return;
         if (mini != null && !mini.IsDisposed) { if (!silent) MessageBox.Show("Finish your reading timer first, then install the update."); return; }
         if (frunning) { if (!silent) MessageBox.Show("Pause or finish your focus timer first, then install the update."); return; }
-        if (!silent && MessageBox.Show("Download and install the update now? Study Tracker will restart. Your data is kept.", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (!silent && MessageBox.Show("Download and install the update now? Study Tracker PC will restart. Your data is kept.", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         busy = true; SetBusy(true, "Starting update..."); if (silent) lblQuote.Text = "Updating to the latest version...";
         System.Threading.ThreadPool.QueueUserWorkItem(delegate
         {
@@ -2047,8 +2104,8 @@ static class Program
                 if (s.Choice == 1)
                 {
                     string err; bool ok = Installer.Install(s.Dir, s.Desk, s.StartMenu, out err);
-                    if (err != null) MessageBox.Show(err, "Study Tracker Setup");
-                    if (ok) { MessageBox.Show("Study Tracker is installed! Opening it now.", "Study Tracker Setup"); Process.Start(Path.Combine(s.Dir, "StudyTracker.exe")); }
+                    if (err != null) MessageBox.Show(err, "Study Tracker PC Setup");
+                    if (ok) { MessageBox.Show("Study Tracker PC is installed! Opening it now.", "Study Tracker PC Setup"); Process.Start(Path.Combine(s.Dir, "StudyTracker.exe")); }
                     return;
                 }
             }
